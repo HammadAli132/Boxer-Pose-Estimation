@@ -1,0 +1,55 @@
+keypoints:
+- left_shoulder
+- right_shoulder
+- left_hip
+- right_hip
+- left_knee
+- right_knee
+- left_ankle
+- right_ankle
+- left_elbow
+- left_wrist
+- right_elbow
+- right_wrist
+- neck
+- nose
+kpt_shape:
+- 14
+- 3
+names:
+- quadruped
+- person
+path: D:\Repositories\Boxer-Pose-Estimation\data\processed
+skeleton:
+- - 9
+  - 10
+- - 1
+  - 3
+- - 2
+  - 4
+- - 1
+  - 2
+- - 3
+  - 4
+- - 6
+  - 8
+- - 4
+  - 6
+- - 5
+  - 7
+- - 11
+  - 12
+- - 14
+  - 13
+- - 1
+  - 13
+- - 13
+  - 2
+- - 2
+  - 11
+- - 1
+  - 9
+- - 3
+  - 5
+train: D:\Repositories\Boxer-Pose-Estimation\data\processed\images\train
+val: D:\Repositories\Boxer-Pose-Estimation\data\processed\images\val
