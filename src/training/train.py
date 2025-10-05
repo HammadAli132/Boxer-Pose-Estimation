@@ -222,13 +222,7 @@ def run_training(
             if isinstance(results, dict):
                 print("\n📊 Validation summary:")
                 print(results)
-            else:
-                try:
-                    print("\n📊 Validation summary:")
-                    print(results.results_dict)
-                except AttributeError:
-                    print("⚠️ No validation results found in returned object.")
-                break
+            
         except Exception as e:
             tb = traceback.format_exc()
             print(f"\n⚠️ Training failed on attempt {attempt}: {e}\n")

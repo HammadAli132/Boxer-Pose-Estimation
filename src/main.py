@@ -30,7 +30,7 @@ if __name__ == "__main__":
         if choice == "1":
             run_script("src.data_processing.extract_frames")
         elif choice == "2":
-            run_script("src.data_processing.merge_coco")
+            run_script("src.data_processing.merge_datasets")
         elif choice == "3":
             run_script("src.data_processing.split_dataset")
         elif choice == "4":
