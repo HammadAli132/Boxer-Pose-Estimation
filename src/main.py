@@ -1,5 +1,7 @@
 import sys
 import importlib
+import subprocess
+from pathlib import Path
 
 def menu():
     print("\n==== Boxer Pose Estimation Pipeline ====\n")
@@ -13,6 +15,33 @@ def menu():
     choice = input("\nEnter your choice: ").strip()
     return choice
 
+# New function to handle model selection before calling training/inference
+def run_model_selection(script_name):
+    print(f"\n--- Model Selection for {script_name.title()} ---")
+    print("1. YOLOv8s-Pose")
+    print("2. DinoV2-ViTS14 (Top-Down)")
+    model_choice = input("Select model (1 or 2): ").strip()
+    
+    if model_choice == "1":
+        model_name = "yolov8s-pose"
+    elif model_choice == "2":
+        model_name = "dinov2_vits14" # This is our new model identifier
+    else:
+        print("❌ Invalid model choice.")
+        return
+
+    # Call the target script using subprocess, passing the model name
+    script_path = PROJECT_ROOT / "src" / "training" / f"{script_name}.py"
+    
+    # We must pass the model name using the '--model' argument
+    command = [sys.executable, str(script_path), "--model", model_name]
+    
+    print(f"\n🚀 Starting {script_name} for {model_name}...")
+    try:
+        subprocess.run(command, check=True, cwd=PROJECT_ROOT)
+    except subprocess.CalledProcessError as e:
+        print(f"\n❌ Pipeline failed for {model_name}. Error: {e}")
+
 def run_script(module_name, func_name="main"):
     try:
         module = importlib.import_module(module_name)
@@ -24,6 +53,7 @@ def run_script(module_name, func_name="main"):
         print(f"❌ Error running {module_name}: {e}")
 
 if __name__ == "__main__":
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
     while True:
         choice = menu()
 
@@ -34,9 +64,9 @@ if __name__ == "__main__":
         elif choice == "3":
             run_script("src.data_processing.split_dataset")
         elif choice == "4":
-            run_script("src.training.train")
+            run_model_selection("train") # Calls train.py
         elif choice == "5":
-            run_script("src.training.inference")
+            run_model_selection("inference") # Calls inference.py
         elif choice == "6":
             run_script("src.utils.visualize")
         elif choice == "0":
