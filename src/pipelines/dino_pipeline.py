@@ -6,6 +6,7 @@ import traceback
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torchvision.transforms as T
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 from pathlib import Path
@@ -25,10 +26,10 @@ RUNS_ROOT = PROJECT_ROOT / "runs"
 
 # --- External Imports (Requires new file/module) ---
 # NOTE: The DeconvolutionalHead must be placed in src/models/keypoint_heads.py
-from models.keypoint_heads import DeconvolutionalHead 
+from ..models.keypoint_heads import DeconvolutionalHead 
 # NOTE: Need a custom utility for inference-time COCO conversion (tensor to COCO)
-from utils.tensor_to_coco import tensor_to_coco_json
-from utils.heatmap_generation import generate_target_heatmaps
+from ..utils.tensor_to_coco import tensor_to_coco_json
+from ..utils.heatmap_generation import generate_target_heatmaps
 
 
 # --- CONSTANTS & CONFIGS ---
@@ -37,7 +38,7 @@ DINO_URL = f"https://dl.fbaipublicfiles.com/dinov2/{DINO_ARCH}/{DINO_ARCH}_pretr
 NUM_KEYPOINTS = 14
 KEYPOINT_CHANNELS = NUM_KEYPOINTS # Output channels for heatmaps
 HEAD_FINAL_RES = 64 # Final height/width of heatmap (e.g., 64x64)
-CROP_SIZE = 256 # Input size for the cropped boxer image
+CROP_SIZE = 224 # Input size for the cropped boxer image
 DEFAULT_EPOCHS = 50
 DEFAULT_BATCH = 4 # Small batch size for 8GB VRAM
 IN_CHANNELS = 384 # DinoV2-ViTS14 feature dimension
@@ -80,21 +81,6 @@ def ensure_dino_weights(model_name: str) -> Path:
 # DinoV2 Custom Dataset & Data Loader
 # -----------------------
 
-def generate_heatmap(keypoints: np.ndarray, bbox: np.ndarray, sigma: int = 2) -> np.ndarray:
-    """
-    Generates a Gaussian heatmap for a single person instance.
-    NOTE: Requires mapping COCO keypoints/bbox/image dimensions to the fixed CROP_SIZE.
-    """
-    # Placeholder: In a real implementation, this converts KP coordinates 
-    # relative to the bbox to Gaussian blobs in the HEAD_FINAL_RES space.
-    heatmaps = np.zeros((NUM_KEYPOINTS, HEAD_FINAL_RES, HEAD_FINAL_RES), dtype=np.float32)
-    # The actual implementation of this function is complex and involves:
-    # 1. Scaling keypoints from (Image H, W) to (CROP_SIZE, CROP_SIZE).
-    # 2. Scaling keypoints from (CROP_SIZE, CROP_SIZE) to (HEAD_FINAL_RES, HEAD_FINAL_RES).
-    # 3. Drawing a Gaussian centered at the scaled keypoint on the map.
-    return heatmaps
-
-
 class DinoPoseDataset(Dataset):
     """Custom PyTorch Dataset for DinoV2 Top-Down Pose Estimation."""
     def __init__(self, split: str):
@@ -117,6 +103,13 @@ class DinoPoseDataset(Dataset):
         
         if not self.instances:
             raise ValueError(f"No valid annotated instances found in {split} set.")
+
+        # Define standard ViT/ImageNet normalization transforms
+        self.transform = T.Compose([
+            T.Resize((CROP_SIZE, CROP_SIZE)),
+            T.ToTensor(),
+            T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ])
         
         print(f"Dataset loaded: {len(self.instances)} boxer instances for {split}.")
 
@@ -137,10 +130,10 @@ class DinoPoseDataset(Dataset):
         
         # 2. Preprocess: Resize crop to fixed input size and convert to tensor
         crop = crop.resize((CROP_SIZE, CROP_SIZE))
-        # Simple Tensor conversion and normalization (In real code, use transforms)
-        image_tensor = torch.from_numpy(np.array(crop)).permute(2, 0, 1).float() / 255.0 
-        
-        # 3. Generate Ground Truth Heatmaps
+        # 3 Apply standard ViT preprocessing
+        image_tensor = self.transform(crop) # Output: (3, 224, 224), float, normalized
+
+        # 4. Generate Ground Truth Heatmaps
         # NOTE: This call relies on complex internal scaling logic (see utility placeholder)
         target_heatmaps = generate_target_heatmaps(
             keypoints_xyv=np.array(ann['keypoints'], dtype=np.float32), 
@@ -153,11 +146,40 @@ class DinoPoseDataset(Dataset):
         return image_tensor, target_tensor # (C, H, W) tensor, (14, H_out, W_out) tensor
 
 # -----------------------
-# DinoV2 Backbone Setup (Moved up)
+# DinoV2 Backbone Wrapper
+# -----------------------
+
+class DinoV2BackboneWrapper(nn.Module):
+    """
+    Wrapper around DINOv2 to extract patch tokens instead of CLS token.
+    """
+    def __init__(self, backbone):
+        super().__init__()
+        self.backbone = backbone
+        
+    def forward(self, x):
+        # Get all tokens from DINOv2 (includes CLS token + patch tokens)
+        # Use get_intermediate_layers or forward_features to get patch tokens
+        # DINOv2 models have a method to get patch tokens
+        features = self.backbone.forward_features(x)
+        
+        # features is a dict with 'x_norm_patchtokens' and 'x_norm_clstoken'
+        # We want the patch tokens: shape (B, num_patches, C)
+        if isinstance(features, dict):
+            patch_tokens = features['x_norm_patchtokens']
+        else:
+            # If it returns a tensor directly, it might be (B, 1+num_patches, C)
+            # We need to exclude the CLS token (first token)
+            patch_tokens = features[:, 1:, :]  # Skip CLS token
+            
+        return patch_tokens  # Shape: (B, L, C)
+
+# -----------------------
+# DinoV2 Backbone Setup (Fixed)
 # -----------------------
 
 def load_dino_backbone(model_name: str) -> Tuple[nn.Module, int]:
-    """Loads DinoV2-ViTS14 and freezes its weights."""
+    """Loads DinoV2-ViTS14 and freezes its weights, returns wrapped backbone."""
     print(f"⬇️ Loading DinoV2 backbone: {model_name}...")
     try:
         backbone = torch.hub.load('facebookresearch/dinov2', model_name, force_reload=False)
@@ -165,12 +187,15 @@ def load_dino_backbone(model_name: str) -> Tuple[nn.Module, int]:
         print(f"❌ Error loading DinoV2 from PyTorch Hub. Check internet/dependencies: {e}")
         sys.exit(1)
 
+    # Wrap the backbone to extract patch tokens
+    wrapped_backbone = DinoV2BackboneWrapper(backbone)
+    
     # Freeze the backbone weights (CRITICAL)
-    for param in backbone.parameters():
+    for param in wrapped_backbone.parameters():
         param.requires_grad = False
         
     feature_dim = 384 # Hardcoding for ViTS14
-    return backbone, feature_dim
+    return wrapped_backbone, feature_dim
 
 # -----------------------
 # DinoV2 Training and Inference Logic
@@ -198,7 +223,7 @@ def setup_dino_model(model_name: str, resume: bool) -> nn.Module:
     # Load previously trained head weights if resuming
     checkpoint_target = MODELS_ROOT / model_name / "best_head.pt"
     if resume and checkpoint_target.exists():
-        print(f"🔁 Resuming DinoV2 head from: {checkpoint_target}")
+        print(f"🔄 Resuming DinoV2 head from: {checkpoint_target}")
         pose_head.load_state_dict(torch.load(checkpoint_target))
     else:
         print("📦 Starting DinoV2 head training from scratch.")

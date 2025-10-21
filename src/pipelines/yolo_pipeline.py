@@ -20,7 +20,7 @@ from ultralytics import YOLO
 import yaml
 
 # Import your converter
-from utils.coco_to_yolo_pose import coco_to_yolo_keypoints
+from ..utils.coco_to_yolo_pose import coco_to_yolo_keypoints
 
 # -----------------------
 # Project paths

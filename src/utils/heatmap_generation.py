@@ -4,7 +4,7 @@ from typing import List, Tuple
 # --- CONSTANTS (Must match dino_pipeline.py) ---
 NUM_KEYPOINTS = 14
 HEAD_FINAL_RES = 64 # Output heatmap resolution (e.g., 64x64)
-CROP_SIZE = 256 # Fixed input size for the cropped image
+CROP_SIZE = 224 # Fixed input size for the cropped image
 SIGMA = 2 # Standard deviation for Gaussian kernel
 
 

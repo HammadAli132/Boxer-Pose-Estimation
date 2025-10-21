@@ -9,7 +9,7 @@ from pathlib import Path
 import os
 
 from ..pipelines.yolo_pipeline import run_yolo_training
-# from ..pipelines.dino_pipeline import run_dino_training
+from ..pipelines.dino_pipeline import run_dino_training
 
 # -----------------------
 # Defaults
@@ -24,7 +24,7 @@ DEFAULT_WORKERS = 0
 def main():
     parser = argparse.ArgumentParser(description="Train Pose Models")
     # NOTE: The 'model' arg is now required and is passed from main.py
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Model name (yolov8s-pose or dinov2_vits14)")
+    parser.add_argument("--model_name", default=DEFAULT_MODEL, help="Model name (yolov8s-pose or dinov2_vits14)")
     parser.add_argument("--epochs", type=int, default=EPOCHS)
     parser.add_argument("--imgsz", type=int, default=IMGSZ)
     parser.add_argument("--batch", type=int, default=DEFAULT_BATCH)
@@ -36,16 +36,16 @@ def main():
     kwargs = vars(args)
 
     success = False
-    if args.model.startswith("yolov"):
+    if args.model_name.startswith("yolov"):
         # The existing YOLO code is in yolo_pipeline.py
         success = run_yolo_training(**kwargs)
         
-    # elif args.model.startswith("dinov2"):
-    #     # The new DinoV2 code will be in dino_pipeline.py
-    #     success = run_dino_training(**kwargs)
+    elif args.model_name.startswith("dinov2"):
+        # The new DinoV2 code will be in dino_pipeline.py
+        success = run_dino_training(**kwargs)
         
     else:
-        print(f"❌ Unknown model: {args.model}")
+        print(f"❌ Unknown model: {args.model_name}")
         sys.exit(1)
 
     if not success:
