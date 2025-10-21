@@ -21,6 +21,7 @@ import yaml
 
 # Import your converter
 from ..utils.coco_to_yolo_pose import coco_to_yolo_keypoints
+from ..utils.results_to_coco import save_results_as_coco
 
 # -----------------------
 # Project paths
@@ -32,6 +33,8 @@ IMAGES_DIR = DATA_PROCESSED / "images"
 ANNOTS_DIR = DATA_PROCESSED / "annotations"
 LABELS_DIR = DATA_PROCESSED / "labels"
 MODELS_ROOT = PROJECT_ROOT / "models"
+IMAGES_TEST = DATA_PROCESSED / "images" / "test"
+OUT_TEST_JSON = ANNOTS_DIR / "test.json"
 RUNS_ROOT = PROJECT_ROOT / "runs"  # <-- NEW: store training results here
 
 # -----------------------
@@ -191,9 +194,9 @@ def run_yolo_training(
 
     # Create new run directory
     run_number = 1
-    while (RUNS_ROOT / f"run_{run_number}").exists():
+    while (RUNS_ROOT / model_name / f"run_{run_number}").exists():
         run_number += 1
-    current_run_dir = RUNS_ROOT / f"run_{run_number}"
+    current_run_dir = RUNS_ROOT / model_name / f"run_{run_number}"
     current_run_dir.mkdir(parents=True)
     print(f"🧾 Logging this training to: {current_run_dir}")
 
@@ -213,7 +216,7 @@ def run_yolo_training(
                 imgsz=imgsz,
                 batch=current_batch,
                 workers=current_workers,
-                project=str(current_run_dir),  # now goes to /runs/run_{n}
+                project=str(current_run_dir),  # now goes to /runs/model_name/run_{n}
                 name="",  # avoid subfolder (no /exp)
                 exist_ok=True,
                 device=0 if torch.cuda.is_available() else "cpu"
@@ -272,4 +275,62 @@ def run_yolo_training(
 
 
     print(f"\n🎉 Training finished. Results saved in: {current_run_dir}")
+    return True
+
+def run_yolo_inference(
+    model_name: str, 
+    device: str = "0", 
+    conf: float = 0.2,
+    **kwargs # Accept other args
+) -> bool:
+    """
+    Runs YOLO inference on test images and saves results as COCO JSON.
+    (Content is copied directly from original inference.py:run_inference)
+    """
+    from ultralytics import YOLO # Need to re-import YOLO here
+
+    print(f"\n--- YOLOv8 Inference Pipeline ({model_name}) ---")
+    model_path = MODELS_ROOT / model_name / "best.pt"
+    if not model_path.exists():
+        print(f"❌ Model not found: {model_path}")
+        return False
+
+    print(f"Loading YOLO model from: {model_path}")
+    model = YOLO(str(model_path))
+
+    # Collect test images (sorted for consistency)
+    image_paths = sorted([
+        p for p in IMAGES_TEST.glob("*") 
+        if p.suffix.lower() in [".jpg", ".jpeg", ".png"]
+    ])
+    
+    if not image_paths:
+        print(f"No test images found at: {IMAGES_TEST}")
+        return True # Not an error if no test images
+
+    print(f"Found {len(image_paths)} test images")
+    print(f"Running inference with confidence threshold: {conf}")
+    
+    # Run inference
+    results = model.predict(
+        source=[str(p) for p in image_paths],
+        imgsz=640,
+        save=False,
+        device=device,
+        conf=conf,
+        verbose=True
+    )
+
+    results = list(results)
+    print(f"\nConverting YOLO results to COCO format...")
+    
+    # Convert results to COCO format and save
+    save_results_as_coco(
+        results=results,
+        image_paths=image_paths,
+        out_json=OUT_TEST_JSON,
+        overwrite=True
+    )
+
+    print(f"✅ YOLO Inference complete! COCO annotations saved to: {OUT_TEST_JSON}")
     return True

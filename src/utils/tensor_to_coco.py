@@ -23,7 +23,7 @@ SKELETON_CONNECTIONS = [
     [1, 9], [3, 5]
 ]
 
-def heatmap_to_keypoints(heatmaps: torch.Tensor, confidence_threshold: float = 0.5) -> List[Tuple[float, float, int]]:
+def heatmap_to_keypoints(heatmaps: torch.Tensor, crop_size: int, confidence_threshold: float = 0.5) -> List[Tuple[float, float, int]]:
     """
     Converts a single (14, H_out, W_out) heatmap tensor to 14 (x, y, v) tuples.
     This assumes the input heatmap is scaled relative to the *cropped* input image.
@@ -35,7 +35,7 @@ def heatmap_to_keypoints(heatmaps: torch.Tensor, confidence_threshold: float = 0
     # For simplicity, we assume we need to scale the predicted coordinates (from heatmap space)
     # back to the expected input crop size (e.g., 256x256 crop). 
     # NOTE: This factor must be calibrated with the input size and upsampling in the head.
-    scale_factor = 640 / W_out # Assuming 640 input and W_out=160 (4x upsample)
+    scale_factor = crop_size / W_out # Assuming 640 input and W_out=160 (4x upsample)
     
     for k in range(num_kps):
         kp_map = heatmaps[k]
@@ -62,6 +62,7 @@ def tensor_to_coco_json(
     results: List[Tuple[torch.Tensor, Tuple[float, float, float, float]]], # (Heatmaps, BBox_in_Frame)
     image_info: List[Dict[str, Any]],
     out_json: Path = DEFAULT_OUTPUT_PATH,
+    crop_size: int = 224,
     overwrite: bool = True
 ):
     """
@@ -93,7 +94,7 @@ def tensor_to_coco_json(
     
     for result_idx, (heatmaps, bbox_frame) in enumerate(results):
         # 1. Convert heatmaps to (x, y, v) list in crop coordinates
-        kp_crop_list = heatmap_to_keypoints(heatmaps.squeeze(0)) # Squeeze B dim
+        kp_crop_list = heatmap_to_keypoints(heatmaps.squeeze(0), crop_size=crop_size) # Squeeze B dim
         
         # 2. Convert crop coordinates to full frame coordinates
         x_min, y_min, x_max, y_max = bbox_frame # BBox in frame coordinates
