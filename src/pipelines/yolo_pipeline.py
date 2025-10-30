@@ -285,7 +285,7 @@ def run_yolo_training(
 
 def run_yolo_inference(
     model_name: str, 
-    device: str = "0", 
+    device: str = "0",
     conf: float = 0.2,
     **kwargs # Accept other args
 ) -> bool:
@@ -293,7 +293,6 @@ def run_yolo_inference(
     Runs YOLO inference on test images and saves results as COCO JSON.
     (Content is copied directly from original inference.py:run_inference)
     """
-    from ultralytics import YOLO # Need to re-import YOLO here
 
     print(f"\n--- YOLOv8 Inference Pipeline ({model_name}) ---")
     model_path = MODELS_ROOT / model_name / "best.pt"

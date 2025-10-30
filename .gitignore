@@ -11,6 +11,7 @@ folder_structure.txt
 /data/
 /models/
 /runs/
+/mmpose_env/
 
 # But DON'T ignore the models folder inside src
 !src/models/
