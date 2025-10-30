@@ -34,7 +34,7 @@ def run_model_selection(script_name):
     script_path = PROJECT_ROOT / "src" / "training" / f"{script_name}.py"
     
     # We must pass the model name using the '--model' argument
-    command = [sys.executable, "-m", "src.training.train", "--model_name", model_name]
+    command = [sys.executable, "-m", "src.training.inference", "--model_name", model_name]
     
     print(f"\n🚀 Starting {script_name} for {model_name}...")
     try:

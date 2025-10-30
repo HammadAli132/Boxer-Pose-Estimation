@@ -23,7 +23,7 @@ SKELETON_CONNECTIONS = [
     [1, 9], [3, 5]
 ]
 
-def heatmap_to_keypoints(heatmaps: torch.Tensor, crop_size: int, confidence_threshold: float = 0.5) -> List[Tuple[float, float, int]]:
+def heatmap_to_keypoints(heatmaps: torch.Tensor, crop_size: int, confidence_threshold: float = 0) -> List[Tuple[float, float, int]]:
     """
     Converts a single (14, H_out, W_out) heatmap tensor to 14 (x, y, v) tuples.
     This assumes the input heatmap is scaled relative to the *cropped* input image.
@@ -41,6 +41,7 @@ def heatmap_to_keypoints(heatmaps: torch.Tensor, crop_size: int, confidence_thre
         kp_map = heatmaps[k]
         # Find maximum value and its location (y, x in array terms)
         max_val = kp_map.max()
+        print(f"Keypoint {k}: max value = {max_val.item()}")
         if max_val.item() < confidence_threshold:
             kps_list.extend([0.0, 0.0, 0]) # Not visible (v=0)
             continue

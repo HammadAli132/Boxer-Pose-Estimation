@@ -344,81 +344,85 @@ def run_dino_training(
 def run_dino_inference(
     model_name: str, 
     device: str, 
-    conf: float, # Used for filtering DETR detections and heatmap-to-kp conversion
+    conf: float,
+    image_path: str = None, # optional single-image path (e.g., "D:/Repositories/Boxer-Pose-Estimation/data/processed/images/test/video12_frame_000451.png")
     **kwargs
 ) -> bool:
-    print(f"\n--- DinoV2 Inference Pipeline ({model_name}) ---")
     
-    # NOTE: The CROP_SIZE constant is defined at the top of this file
+    print(f"\n--- DinoV2 Single-Crop Inference Pipeline ({model_name}) ---")
     
-    # 1. Setup Model (frozen backbone + trained head)
+    # 1. Setup Model
     device = torch.device(device)
+
     try:
         model = setup_dino_model(model_name, resume=True).to(device)
     except FileNotFoundError:
-        print(f"❌ DinoV2 head checkpoint not found at {MODELS_ROOT / model_name}. Run training first.")
+        print(f"❌ DinoV2 head checkpoint not found. Run training first.")
         return False
     model.eval()
     
-    # 2. Load DETR Detector (PLACEHOLDER - REQUIRES SUBMODULE INTEGRATION)
-    # We assume the submodule exposes a function to load the detector and run it.
-    try:
-        # from detector_model.inference_utils import load_detector, detect_boxers
-        # detr_model = load_detector()
-        # print("✅ TF-DETR Detector loaded from submodule.")
-        pass
-    except Exception as e:
-        print(f"❌ Failed to load TF-DETR submodule. Error: {e}")
-        return False
-        
-    # --- Collect Images ---
-    image_paths = sorted([
-        p for p in IMAGES_TEST.glob("*") 
-        if p.suffix.lower() in [".jpg", ".jpeg", ".png"]
-    ])
-    if not image_paths:
-        print(f"No test images found at: {IMAGES_TEST}")
-        return True
+    # 2. Determine Source (Single Image or Test Set)
 
+    image_path = "C:/Users/Hammad Ali/Downloads/video12_frame_000451.png"
+    # image_path = "D:/Repositories/Boxer-Pose-Estimation/data/processed/images/test/video12_frame_000451.png"
+    
+    if image_path:
+        # --- SINGLE IMAGE MODE ---
+        single_image_path = Path(image_path)
+        if not single_image_path.exists():
+            print(f"❌ Error: Single image file not found at {single_image_path}")
+            return False
+        
+        # Wrap the single path in a list for unified processing
+        image_paths = [single_image_path]
+        print(f"Running inference on single image: {single_image_path.name}")
+        
+    else:
+        # --- BATCH MODE (Original Test Set Logic) ---
+        image_paths = sorted([
+            p for p in IMAGES_TEST.glob("*") 
+            if p.suffix.lower() in [".jpg", ".jpeg", ".png"]
+        ])
+        if not image_paths:
+            print(f"No test images found at: {IMAGES_TEST}. Aborting.")
+            return True
+        print(f"Running inference on {len(image_paths)} images in the test set.")
+    
+    # 3. Define Transform (Must match training normalization)
+    inference_transform = T.Compose([
+        T.Resize((CROP_SIZE, CROP_SIZE)),
+        T.ToTensor(),
+        T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ])
+    
     all_results_for_coco = []
     all_image_info = []
     
-    # --- Inference Loop ---
-    print(f"Found {len(image_paths)} test images. Starting Top-Down inference...")
-    
-    # NOTE: Actual inference loop requires DETR and image loading utilities. 
-    # We will SIMULATE the output here to test the COCO conversion.
-    
+    # --- 4. Inference Loop ---
     with torch.no_grad():
         for img_id, img_path in enumerate(image_paths, start=1):
             
-            # --- PHASE 1: DETECT BOXERS (SIMULATED) ---
-            # full_image = Image.open(img_path).convert('RGB')
-            # H, W = full_image.height, full_image.width
-            # boxer_boxes = detect_boxers(full_image, conf_threshold=conf) # Output: [(xmin, ymin, xmax, ymax, conf), ...]
-            
-            # --- SIMULATE DETR OUTPUT (Two boxers per image) ---
-            W, H = 640, 480 # Simulated image dimensions
-            sim_boxes = [
-                (100.0, 100.0, 300.0, 400.0), # Boxer 1
-                (400.0, 150.0, 550.0, 400.0), # Boxer 2
-            ]
+            try:
+                image = Image.open(img_path).convert('RGB')
+            except Exception as e:
+                print(f"⚠️ Error loading {img_path.name}: {e}. Skipping.")
+                continue
 
-            # --- PHASE 2: POSE ESTIMATION ---
-            for xmin, ymin, xmax, ymax in sim_boxes:
-                bbox_frame = (xmin, ymin, xmax, ymax)
-                
-                # --- SIMULATE CROP PREPROCESSING ---
-                # cropped_tensor = preprocess_crop_for_dino(full_image, bbox_frame)
-                cropped_tensor = torch.randn(1, 3, CROP_SIZE, CROP_SIZE).to(device) 
-                
-                # Forward pass through DinoV2 + Head
-                heatmaps = model(cropped_tensor) 
-                
-                # Store results
-                all_results_for_coco.append((heatmaps.cpu(), bbox_frame))
+            W, H = image.width, image.height
+            
+            # Preprocess: Resize and Normalize
+            cropped_tensor = inference_transform(image).unsqueeze(0).to(device) 
+            
+            # Forward pass through DinoV2 + Head
+            heatmaps = model(cropped_tensor) 
+            
+            # Since the image is pre-cropped, the BBox is the full image size (0, 0, W, H)
+            bbox_frame = (0.0, 0.0, float(W), float(H))
+            
+            all_results_for_coco.append((heatmaps.cpu(), bbox_frame))
             
             # Store image metadata for COCO JSON
+            # NOTE: If running on a single image, this list will only have one entry.
             all_image_info.append({
                 "id": img_id,
                 "file_name": img_path.name,
@@ -426,17 +430,25 @@ def run_dino_inference(
                 "width": W
             })
             
-    # 3. Convert Results to COCO JSON
-    print(f"\nConverting {len(all_results_for_coco)} keypoint predictions to COCO format...")
-
-    # NOTE: Passing CROP_SIZE (224) to the conversion utility
+            # OPTIONAL: If running a single image, you may want to break here or 
+            # only process one. We process all images in the list (1 in single-mode).
+            
+    # 5. Convert Results to COCO JSON
+    
+    # The output JSON path should reflect the mode. 
+    # For a single image, it's better to save to a unique file or the default test.json
+    out_json_path = OUT_TEST_JSON
+    if image_path:
+        # Example: save to a uniquely named file next to the image, or just stick to test.json
+        print("NOTE: Single image result is merged into test.json.")
+    
     tensor_to_coco_json(
         results=all_results_for_coco,
         image_info=all_image_info,
-        out_json=OUT_TEST_JSON,
+        out_json=out_json_path,
         overwrite=True,
-        crop_size=CROP_SIZE 
+        crop_size=CROP_SIZE
     )
     
-    print(f"✅ DinoV2 Inference complete! COCO annotations saved to: {OUT_TEST_JSON}")
+    print(f"✅ DinoV2 Inference complete! COCO annotations saved to: {out_json_path}")
     return True

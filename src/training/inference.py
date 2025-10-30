@@ -26,7 +26,7 @@ def main():
     )
     parser.add_argument(
         "--device", 
-        default="0",
+        default="cuda:0",
         help="Device for inference (e.g., '0' for GPU, 'cpu' for CPU)."
     )
     parser.add_argument(
