@@ -18,6 +18,11 @@ from pathlib import Path
 import requests
 from ultralytics import YOLO
 import yaml
+from ultralytics.engine.results import Results
+from torchvision import transforms as T
+from PIL import Image
+import json
+import numpy as np
 
 # Import your converter
 from ..utils.coco_to_yolo_pose import coco_to_yolo_keypoints
@@ -35,6 +40,7 @@ LABELS_DIR = DATA_PROCESSED / "labels"
 MODELS_ROOT = PROJECT_ROOT / "models"
 IMAGES_TEST = DATA_PROCESSED / "images" / "test"
 OUT_TEST_JSON = ANNOTS_DIR / "test.json"
+RFDETR_ANNOTS_DIR = DATA_PROCESSED / "annotations/rf-detr"
 RUNS_ROOT = PROJECT_ROOT / "runs"  # <-- NEW: store training results here
 
 # -----------------------
@@ -334,3 +340,161 @@ def run_yolo_inference(
 
     print(f"✅ YOLO Inference complete! COCO annotations saved to: {OUT_TEST_JSON}")
     return True
+
+# def run_yolo_inference(
+#     model_name: str,
+#     device: str = "0",
+#     conf: float = 0.2,
+#     **kwargs
+# ) -> bool:
+#     """
+#     Unified YOLOv8 inference pipeline that:
+#     1. Uses RF-DETR bounding boxes (if available) to crop and run YOLOv8 pose estimation.
+#     2. Falls back to standard full-frame inference if no RF-DETR detections exist.
+#     3. Saves results as COCO JSON using save_results_as_coco().
+#     """
+
+#     print(f"\n--- YOLOv8 Inference Pipeline ({model_name}) ---")
+
+#     model_path = MODELS_ROOT / model_name / "best.pt"
+#     if not model_path.exists():
+#         print(f"❌ Model not found: {model_path}")
+#         return False
+
+#     model = YOLO(str(model_path))
+#     device = "cuda" if torch.cuda.is_available() else device
+#     print(f"Using device: {device}")
+
+#     image_paths = sorted([
+#         p for p in IMAGES_TEST.glob("*")
+#         if p.suffix.lower() in [".jpg", ".jpeg", ".png"]
+#     ])
+#     if not image_paths:
+#         print(f"❌ No test images found at: {IMAGES_TEST}")
+#         return False
+
+#     print(f"Found {len(image_paths)} test images")
+
+#     all_results: list[Results] = []
+
+#     for img_id, img_path in enumerate(image_paths, start=1):
+#         image = Image.open(img_path).convert("RGB")
+#         W, H = image.width, image.height
+
+#         # Load RF-DETR annotations if available
+#         annotation_path = RFDETR_ANNOTS_DIR / f"{img_path.stem}.json"
+#         detections = []
+#         if annotation_path.exists():
+#             with open(annotation_path, "r", encoding="utf-8") as f:
+#                 data = json.load(f)
+#                 detections = data.get("detections", [])
+
+#         # --- CASE 1: Use crops if detections exist ---
+#         if detections:
+#             print(f"→ Using RF-DETR crops for {img_path.name} ({len(detections)} detections)")
+#             combined_kps, combined_boxes = [], []
+
+#             for det in detections:
+#                 bbox_xyxy = det["bbox_xyxy"]
+#                 x1, y1, x2, y2 = map(int, bbox_xyxy)
+#                 x1, y1 = max(0, x1), max(0, y1)
+#                 x2, y2 = min(W, x2), min(H, y2)
+                
+#                 crop_w, crop_h = x2 - x1, y2 - y1
+#                 if crop_w <= 0 or crop_h <= 0 or crop_w < 50 or crop_h < 50:
+#                     continue  # Skip too-small crops
+
+#                 cropped = image.crop((x1, y1, x2, y2))
+
+#                 results = model.predict(
+#                     cropped,
+#                     imgsz=min(640, max(crop_w, crop_h)),  # Don't upscale tiny crops
+#                     device=device,
+#                     conf=0.5,  # Higher threshold for crops
+#                     verbose=False
+#                 )
+
+#                 if not results or len(results) == 0:
+#                     continue
+
+#                 res = results[0]
+#                 if not hasattr(res, "keypoints") or res.keypoints is None or len(res.keypoints) == 0:
+#                     continue
+
+#                 # Get keypoints with confidence (shape: N, 17, 3)
+#                 kp_data = res.keypoints.data.cpu().numpy()
+#                 boxes = res.boxes.xyxy.cpu().numpy()
+#                 confs = res.boxes.conf.cpu().numpy()
+                
+#                 if len(kp_data) == 0:
+#                     continue
+                
+#                 # Keep only the BEST detection (highest confidence)
+#                 best_idx = confs.argmax()
+#                 kp_data = kp_data[best_idx:best_idx+1]  # Keep 3D shape
+#                 boxes = boxes[best_idx:best_idx+1]
+                
+#                 # Shift keypoints to original frame coordinates
+#                 kp_data[..., 0] += x1  # x coordinates
+#                 kp_data[..., 1] += y1  # y coordinates
+#                 # kp_data[..., 2] is confidence, don't shift
+                
+#                 # Shift boxes
+#                 boxes[:, [0, 2]] += x1
+#                 boxes[:, [1, 3]] += y1
+
+#                 combined_kps.append(kp_data)
+#                 combined_boxes.append(boxes)
+
+#             if combined_kps:
+#                 # Merge all detections from this image
+#                 kps_final = np.concatenate(combined_kps, axis=0)
+#                 boxes_final = np.concatenate(combined_boxes, axis=0)
+
+#                 # Convert to torch
+#                 boxes_crops = torch.tensor(boxes_final, dtype=torch.float32)
+#                 conf_t = torch.ones((boxes_crops.shape[0], 1)) * 0.99  # dummy conf
+#                 cls_t = torch.zeros((boxes_crops.shape[0], 1))          # class 0 (boxer)
+#                 boxes_yolo = torch.cat([boxes_crops, conf_t, cls_t], dim=1)  # shape Nx6
+
+#                 # Construct synthetic YOLO Results object
+#                 result_obj = Results(
+#                     orig_img=np.array(image),
+#                     path=str(img_path),
+#                     names=model.names,
+#                     boxes=boxes_yolo,
+#                     keypoints=torch.tensor(kps_final, dtype=torch.float32),
+#                 )
+
+#                 all_results.append(result_obj)
+#             else:
+#                 print(f"⚠️ No valid keypoints detected for {img_path.name}")
+
+#         # --- CASE 2: Fallback: Full-frame inference ---
+#         else:
+#             results = model.predict(
+#                 source=str(img_path),
+#                 imgsz=640,
+#                 device=device,
+#                 conf=conf,
+#                 verbose=False
+#             )
+#             if results:
+#                 all_results.append(results[0])
+
+#         if img_id % 50 == 0:
+#             print(f"Processed {img_id}/{len(image_paths)} images...")
+
+#     print(f"\n✅ Total results collected: {len(all_results)}")
+
+#     # --- Save to COCO format ---
+#     print(f"Saving results to COCO format at {OUT_TEST_JSON} ...")
+#     save_results_as_coco(
+#         results=all_results,
+#         image_paths=image_paths,
+#         out_json=OUT_TEST_JSON,
+#         overwrite=True
+#     )
+
+#     print(f"✅ Inference complete. COCO annotations saved to: {OUT_TEST_JSON}")
+#     return True

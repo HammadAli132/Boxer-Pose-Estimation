@@ -21,6 +21,7 @@ PROJECT_ROOT = THIS_FILE.parents[2]
 DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
 IMAGES_DIR = DATA_PROCESSED / "images"
 ANNOTS_DIR = DATA_PROCESSED / "annotations"
+RFDETR_ANNOTS_DIR = DATA_PROCESSED / "annotations/rf-detr"
 MODELS_ROOT = PROJECT_ROOT / "models"
 RUNS_ROOT = PROJECT_ROOT / "runs" 
 IMAGES_TEST = DATA_PROCESSED / "images" / "test"
@@ -345,11 +346,15 @@ def run_dino_inference(
     model_name: str, 
     device: str, 
     conf: float,
-    image_path: str = None, # optional single-image path (e.g., "D:/Repositories/Boxer-Pose-Estimation/data/processed/images/test/video12_frame_000451.png")
+    image_path: str = None,
     **kwargs
 ) -> bool:
+    """
+    Run DinoV2 inference on test images using RF-DETR bounding boxes.
+    Crops boxers from frames and extracts keypoints.
+    """
     
-    print(f"\n--- DinoV2 Single-Crop Inference Pipeline ({model_name}) ---")
+    print(f"\n--- DinoV2 Inference Pipeline with RF-DETR Crops ({model_name}) ---")
     
     # 1. Setup Model
     device = torch.device(device)
@@ -361,32 +366,17 @@ def run_dino_inference(
         return False
     model.eval()
     
-    # 2. Determine Source (Single Image or Test Set)
-
-    image_path = "C:/Users/Hammad Ali/Downloads/video12_frame_000451.png"
-    # image_path = "D:/Repositories/Boxer-Pose-Estimation/data/processed/images/test/video12_frame_000451.png"
+    # 2. Get all test images
+    image_paths = sorted([
+        p for p in IMAGES_TEST.glob("*") 
+        if p.suffix.lower() in [".jpg", ".jpeg", ".png"]
+    ])
     
-    if image_path:
-        # --- SINGLE IMAGE MODE ---
-        single_image_path = Path(image_path)
-        if not single_image_path.exists():
-            print(f"❌ Error: Single image file not found at {single_image_path}")
-            return False
-        
-        # Wrap the single path in a list for unified processing
-        image_paths = [single_image_path]
-        print(f"Running inference on single image: {single_image_path.name}")
-        
-    else:
-        # --- BATCH MODE (Original Test Set Logic) ---
-        image_paths = sorted([
-            p for p in IMAGES_TEST.glob("*") 
-            if p.suffix.lower() in [".jpg", ".jpeg", ".png"]
-        ])
-        if not image_paths:
-            print(f"No test images found at: {IMAGES_TEST}. Aborting.")
-            return True
-        print(f"Running inference on {len(image_paths)} images in the test set.")
+    if not image_paths:
+        print(f"❌ No test images found at: {IMAGES_TEST}")
+        return False
+    
+    print(f"Found {len(image_paths)} test images")
     
     # 3. Define Transform (Must match training normalization)
     inference_transform = T.Compose([
@@ -395,13 +385,17 @@ def run_dino_inference(
         T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
     ])
     
+    # Storage for COCO JSON output
     all_results_for_coco = []
     all_image_info = []
+    annotation_id = 1
     
     # --- 4. Inference Loop ---
+    print("\nProcessing images...")
     with torch.no_grad():
         for img_id, img_path in enumerate(image_paths, start=1):
             
+            # Load image
             try:
                 image = Image.open(img_path).convert('RGB')
             except Exception as e:
@@ -410,19 +404,7 @@ def run_dino_inference(
 
             W, H = image.width, image.height
             
-            # Preprocess: Resize and Normalize
-            cropped_tensor = inference_transform(image).unsqueeze(0).to(device) 
-            
-            # Forward pass through DinoV2 + Head
-            heatmaps = model(cropped_tensor) 
-            
-            # Since the image is pre-cropped, the BBox is the full image size (0, 0, W, H)
-            bbox_frame = (0.0, 0.0, float(W), float(H))
-            
-            all_results_for_coco.append((heatmaps.cpu(), bbox_frame))
-            
             # Store image metadata for COCO JSON
-            # NOTE: If running on a single image, this list will only have one entry.
             all_image_info.append({
                 "id": img_id,
                 "file_name": img_path.name,
@@ -430,25 +412,88 @@ def run_dino_inference(
                 "width": W
             })
             
-            # OPTIONAL: If running a single image, you may want to break here or 
-            # only process one. We process all images in the list (1 in single-mode).
+            # Load corresponding RF-DETR annotation
+            annotation_path = RFDETR_ANNOTS_DIR / f"{img_path.stem}.json"
+            rf_detr_data = _load_rf_detr_annotation(annotation_path)
             
+            detections = rf_detr_data.get('detections', [])
+            
+            if not detections:
+                print(f"⚠️ No detections found for {img_path.name}. Skipping.")
+                continue
+            
+            # Process each detected boxer
+            for detection in detections:
+                bbox_xyxy = detection['bbox_xyxy']
+                class_name = detection['class_name']
+                track_id = detection['track_id']
+                
+                # Extract bounding box coordinates
+                x1, y1, x2, y2 = map(int, bbox_xyxy)
+                
+                # Ensure valid crop coordinates
+                x1 = max(0, x1)
+                y1 = max(0, y1)
+                x2 = min(W, x2)
+                y2 = min(H, y2)
+                
+                # Skip invalid boxes
+                if x2 <= x1 or y2 <= y1:
+                    print(f"⚠️ Invalid bbox for {img_path.name}, {class_name}. Skipping.")
+                    continue
+                
+                # Crop the boxer from the image
+                cropped_image = image.crop((x1, y1, x2, y2))
+                
+                # Preprocess: Resize and Normalize
+                cropped_tensor = inference_transform(cropped_image).unsqueeze(0).to(device)
+                
+                # Forward pass through DinoV2 + Head
+                heatmaps = model(cropped_tensor)  # Output: (1, NUM_KEYPOINTS, H_out, W_out)
+                
+                # Store results with bbox information for coordinate transformation
+                bbox_xywh = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
+                
+                all_results_for_coco.append({
+                    'heatmaps': heatmaps.cpu(),
+                    'bbox_xywh': bbox_xywh,
+                    'image_id': img_id,
+                    'annotation_id': annotation_id,
+                    'class_name': class_name,
+                    'track_id': track_id,
+                    'bbox_xyxy': bbox_xyxy
+                })
+                
+                annotation_id += 1
+            
+            # Progress indicator
+            if img_id % 50 == 0:
+                print(f"  Processed {img_id}/{len(image_paths)} images...")
+    
+    print(f"\n✅ Processed {len(all_results_for_coco)} boxer crops from {len(image_paths)} images")
+    
     # 5. Convert Results to COCO JSON
+    print(f"\nConverting results to COCO format...")
     
-    # The output JSON path should reflect the mode. 
-    # For a single image, it's better to save to a unique file or the default test.json
-    out_json_path = OUT_TEST_JSON
-    if image_path:
-        # Example: save to a uniquely named file next to the image, or just stick to test.json
-        print("NOTE: Single image result is merged into test.json.")
-    
+    # NOTE: This function needs to transform heatmaps back to keypoint coordinates
+    # in the original image space using the bbox information
     tensor_to_coco_json(
         results=all_results_for_coco,
         image_info=all_image_info,
-        out_json=out_json_path,
+        out_json=OUT_TEST_JSON,
         overwrite=True,
         crop_size=CROP_SIZE
     )
     
-    print(f"✅ DinoV2 Inference complete! COCO annotations saved to: {out_json_path}")
+    print(f"✅ DinoV2 Inference complete! COCO annotations saved to: {OUT_TEST_JSON}")
+    print(f"   Total annotations: {len(all_results_for_coco)}")
     return True
+
+
+def _load_rf_detr_annotation(annotation_path: Path) -> dict:
+    """Load RF-DETR annotation JSON file."""
+    if not annotation_path.exists():
+        return {'detections': []}
+    
+    with open(annotation_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
