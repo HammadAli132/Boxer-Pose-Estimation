@@ -1,0 +1,3 @@
+[submodule "src/detector_model"]
+	path = src/detector_model
+	url = git@github.com:FightSense/Boxer-Detection.git
