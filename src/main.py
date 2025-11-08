@@ -11,6 +11,7 @@ def menu():
     print("4. Train model")
     print("5. Run inference")
     print("6. Visualize results")
+    print("7. Rename COCO frame annotations")
     print("0. Exit")
     choice = input("\nEnter your choice: ").strip()
     return choice
@@ -69,6 +70,8 @@ if __name__ == "__main__":
             run_model_selection("inference") # Calls inference.py
         elif choice == "6":
             run_script("src.utils.visualize")
+        elif choice == "7":
+            run_script("src.utils.rename_frames")
         elif choice == "0":
             print("👋 Exiting... Bye!")
             sys.exit(0)

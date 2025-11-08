@@ -9,7 +9,7 @@ import numpy as np
 
 # ==================== CONFIGURATION ====================
 # Base project directory (update if needed)
-PROJECT_ROOT = Path("D:/Repositories/Boxer-Pose-Estimation").resolve()
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # Input directories
 TEST_FRAMES_DIR = PROJECT_ROOT / "data/processed/images/test"
