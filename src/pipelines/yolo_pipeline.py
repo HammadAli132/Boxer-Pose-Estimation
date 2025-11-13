@@ -579,6 +579,17 @@ def run_yolo_inference(
         verbose=True
     )
 
+    # Add this debug code after model.predict():
+    for i, result in enumerate(results[:1]):  # Check first result
+        print(f"\n=== Debug Result {i} ===")
+        print(f"Has boxes: {hasattr(result, 'boxes')}")
+        if hasattr(result, 'boxes') and result.boxes is not None:
+            print(f"Boxes shape: {result.boxes.xyxy.shape}")
+            print(f"Has cls: {hasattr(result.boxes, 'cls')}")
+            if hasattr(result.boxes, 'cls'):
+                print(f"Classes: {result.boxes.cls}")
+                print(f"Class names: {result.names}")
+
     results = list(results)
     print(f"\nConverting YOLO results to COCO format...")
     

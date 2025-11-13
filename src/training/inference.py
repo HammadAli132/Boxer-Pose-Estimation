@@ -11,7 +11,7 @@ PROJECT_ROOT = THIS_FILE.parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 # --- DEFAULT CONSTANTS ---
-DEFAULT_MODEL_NAME = "yolov8s-pose"
+DEFAULT_MODEL_NAME = "yolov8m-pose"
 DEFAULT_CONF_THRESHOLD = 0.2
 
 # --- MAIN DISPATCHER ---

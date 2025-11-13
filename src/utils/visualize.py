@@ -8,7 +8,6 @@ import numpy as np
 
 
 # ==================== CONFIGURATION ====================
-# Base project directory (update if needed)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # Input directories
@@ -20,35 +19,26 @@ COCO_ANNOTATION_FILE = PROJECT_ROOT / "data/processed/annotations/test.json"
 OUTPUTS_DIR = PROJECT_ROOT / "data/outputs"
 
 # Video settings
-FPS = 25  # Frames per second for output video
-CODEC = 'mp4v'  # Codec for .mp4 output
+FPS = 25
+CODEC = 'mp4v'
 
-
-# Color scheme for bounding boxes (BGR format)
+# Color scheme (BGR format)
 COLORS = {
     'boxer_blue': (255, 0, 0),    # Blue
     'boxer_red': (0, 0, 255),     # Red
     'unknown': (128, 128, 128)    # Gray
 }
 
-# Keypoint visualization colors
-KEYPOINT_COLOR = (0, 255, 0)  # Green for keypoints
-SKELETON_COLOR = (255, 255, 0)  # Cyan for skeleton lines
-BBOX_COLOR = (0, 165, 255)  # Orange for bounding boxes
-
-# Box and text styling
+# Styling
 BOX_THICKNESS = 2
-KEYPOINT_RADIUS = 4
+KEYPOINT_RADIUS = 5
 SKELETON_THICKNESS = 2
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 FONT_SCALE = 0.6
 FONT_THICKNESS = 2
-TEXT_COLOR = (255, 255, 255)  # White text
+TEXT_COLOR = (255, 255, 255)
 
-# Custom 14-keypoint skeleton connections (1-indexed in data, converted to 0-indexed)
-# Keypoints: left_shoulder, right_shoulder, left_hip, right_hip, left_knee, right_knee,
-#            left_ankle, right_ankle, left_elbow, left_wrist, right_elbow, right_wrist,
-#            neck, nose
+# Custom 14-keypoint skeleton connections (0-indexed)
 SKELETON_CONNECTIONS = [
     (8, 9),    # left_elbow to left_wrist
     (0, 2),    # left_shoulder to left_hip
@@ -78,7 +68,7 @@ def _list_image_paths(directory: Path) -> List[Path]:
 
 
 def _find_next_output_number(output_dir: Path, suffix: str = "") -> int:
-    """Find the next available output number (output_1.mp4, output_2.mp4, etc.)."""
+    """Find the next available output number."""
     pattern = f"output_*{suffix}.mp4"
     existing = list(output_dir.glob(pattern))
     if not existing:
@@ -87,7 +77,6 @@ def _find_next_output_number(output_dir: Path, suffix: str = "") -> int:
     numbers = []
     for f in existing:
         try:
-            # Extract number from "output_N{suffix}.mp4"
             stem = f.stem.replace(suffix, "")
             num_str = stem.split('_')[1]
             numbers.append(int(num_str))
@@ -123,7 +112,6 @@ def _load_coco_annotations(coco_path: Path) -> Dict[str, List[Dict]]:
         image_id = ann['image_id']
         filename = image_map.get(image_id)
         if filename:
-            # Remove extension to match with frame stem
             file_stem = Path(filename).stem
             if file_stem not in annotations_by_file:
                 annotations_by_file[file_stem] = []
@@ -141,27 +129,25 @@ def _draw_detection(frame: np.ndarray, detection: Dict) -> np.ndarray:
     confidence = detection.get('confidence', 0.0)
     track_id = detection.get('track_id', '?')
     
-    # Get color for this class
     color = COLORS.get(class_name, COLORS['unknown'])
     
     # Draw bounding box
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, BOX_THICKNESS)
     
-    # Prepare label text
+    # Prepare label
     label = f"ID:{track_id} {class_name} {confidence:.2f}"
     
-    # Calculate text size for background
     (text_width, text_height), baseline = cv2.getTextSize(
         label, FONT, FONT_SCALE, FONT_THICKNESS
     )
     
-    # Draw background rectangle for text
+    # Draw background for text
     cv2.rectangle(
         frame,
         (x1, y1 - text_height - baseline - 5),
         (x1 + text_width, y1),
         color,
-        -1  # Filled rectangle
+        -1
     )
     
     # Draw text
@@ -185,22 +171,29 @@ def _draw_keypoints(frame: np.ndarray, annotation: Dict) -> np.ndarray:
     bbox = annotation['bbox']
     category_id = annotation['category_id']
 
-    # Color scheme based on category
-    if category_id == 0:  # boxer_blue
-        skeleton_color = (255, 0, 0)    # Blue skeleton
-        bbox_color = (200, 100, 0)      # Orange-blue bbox
-        text_bg_color = (255, 0, 0)     # Blue text background
-    else:  # boxer_red
-        skeleton_color = (0, 0, 255)    # Red skeleton
-        bbox_color = (0, 100, 200)      # Orange-red bbox
-        text_bg_color = (0, 0, 255)     # Red text background
+    # Determine colors based on category_id
+    if category_id == 2:  # boxer_blue
+        skeleton_color = (255, 100, 0)    # Bright blue
+        bbox_color = (255, 0, 0)          # Blue bbox
+        text_bg_color = (200, 0, 0)       # Dark blue
+        class_name = "BLUE"
+    elif category_id == 1:  # boxer_red
+        skeleton_color = (0, 100, 255)    # Bright red
+        bbox_color = (0, 0, 255)          # Red bbox
+        text_bg_color = (0, 0, 200)       # Dark red
+        class_name = "RED"
+    else:  # Unknown
+        skeleton_color = (128, 128, 128)  # Gray
+        bbox_color = (128, 128, 128)
+        text_bg_color = (100, 100, 100)
+        class_name = "UNKNOWN"
     
-    keypoint_color = (0, 255, 0)        # Green keypoints
-    text_color = (255, 255, 255)        # White text
+    keypoint_color = (0, 255, 0)  # Green keypoints
+    text_color = (255, 255, 255)  # White text
     
     # Draw bounding box (x, y, w, h format)
     x, y, w, h = map(int, bbox)
-    cv2.rectangle(frame, (x, y), (x + w, y + h), BBOX_COLOR, BOX_THICKNESS)
+    cv2.rectangle(frame, (x, y), (x + w, y + h), bbox_color, BOX_THICKNESS)
     
     # Parse keypoints (x, y, visibility) triplets
     kpts = []
@@ -208,45 +201,48 @@ def _draw_keypoints(frame: np.ndarray, annotation: Dict) -> np.ndarray:
         x_kp = keypoints[i]
         y_kp = keypoints[i + 1]
         vis = keypoints[i + 2]
-        if vis > 0:  # Only draw visible keypoints
+        if vis > 0:  # Only store visible keypoints
             kpts.append((int(x_kp), int(y_kp), vis))
         else:
             kpts.append(None)
     
-    # Draw skeleton connections
+    # Draw skeleton connections FIRST (so they appear behind keypoints)
     for conn in SKELETON_CONNECTIONS:
         idx1, idx2 = conn
         if idx1 < len(kpts) and idx2 < len(kpts):
             if kpts[idx1] is not None and kpts[idx2] is not None:
                 pt1 = (kpts[idx1][0], kpts[idx1][1])
                 pt2 = (kpts[idx2][0], kpts[idx2][1])
-                cv2.line(frame, pt1, pt2, SKELETON_COLOR, SKELETON_THICKNESS)
+                cv2.line(frame, pt1, pt2, skeleton_color, SKELETON_THICKNESS, cv2.LINE_AA)
     
-    # Draw keypoints
+    # Draw keypoints on top
     for kpt in kpts:
         if kpt is not None:
-            cv2.circle(frame, (kpt[0], kpt[1]), KEYPOINT_RADIUS, KEYPOINT_COLOR, -1)
+            cv2.circle(frame, (kpt[0], kpt[1]), KEYPOINT_RADIUS, keypoint_color, -1, cv2.LINE_AA)
+            # Optional: draw a thin border around keypoints for better visibility
+            cv2.circle(frame, (kpt[0], kpt[1]), KEYPOINT_RADIUS, (0, 0, 0), 1, cv2.LINE_AA)
     
-    # Draw label with class-specific color
-    class_name = "boxer_blue" if category_id == 0 else "boxer_red"
-    label = f"{class_name} KPs:{annotation['num_keypoints']}"
+    # Draw label
+    label = f"BOXER {class_name} | KPs:{annotation['num_keypoints']}"
     
     (text_width, text_height), baseline = cv2.getTextSize(
         label, FONT, FONT_SCALE, FONT_THICKNESS
     )
     
+    # Draw text background
     cv2.rectangle(
         frame,
-        (x, y - text_height - baseline - 5),
-        (x + text_width, y),
+        (x, y - text_height - baseline - 8),
+        (x + text_width + 4, y - 2),
         text_bg_color,
         -1
     )
     
+    # Draw text
     cv2.putText(
         frame,
         label,
-        (x, y - baseline - 5),
+        (x + 2, y - baseline - 5),
         FONT,
         FONT_SCALE,
         text_color,
@@ -282,11 +278,11 @@ def main():
     # Get user choice
     annotation_type = _get_user_choice()
     
-    # Verify input directories exist
+    # Verify input directories
     if not TEST_FRAMES_DIR.exists():
         raise FileNotFoundError(f"Test frames directory not found: {TEST_FRAMES_DIR}")
     
-    # Create output directory if needed
+    # Create output directory
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     
     # Get all test frames
@@ -338,6 +334,8 @@ def main():
     # Process each frame
     frames_with_annotations = 0
     frames_without_annotations = 0
+    red_count = 0
+    blue_count = 0
     
     for idx, frame_path in enumerate(frame_paths, 1):
         # Read frame
@@ -366,6 +364,11 @@ def main():
                 frames_with_annotations += 1
                 for annotation in frame_annotations:
                     frame = _draw_keypoints(frame, annotation)
+                    # Count by category
+                    if annotation['category_id'] == 1:
+                        red_count += 1
+                    elif annotation['category_id'] == 2:
+                        blue_count += 1
             else:
                 frames_without_annotations += 1
         
@@ -387,6 +390,13 @@ def main():
     print(f"Total frames processed: {len(frame_paths)}")
     print(f"Frames with annotations: {frames_with_annotations}")
     print(f"Frames without annotations: {frames_without_annotations}")
+    
+    if annotation_type == 'coco':
+        print(f"\nDetection breakdown:")
+        print(f"  Boxer RED: {red_count}")
+        print(f"  Boxer BLUE: {blue_count}")
+        print(f"  Total: {red_count + blue_count}")
+    
     print(f"\nOutput saved to: {output_path}")
     print(f"Video size: {os.path.getsize(output_path) / (1024*1024):.2f} MB")
     print("=" * 60)

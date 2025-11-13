@@ -48,11 +48,11 @@ def to_custom_keypoints(yolo_kps):
     n_kps, dim = yolo_kps.shape
     has_conf = (dim == 3)
 
-    # If already 14 keypoints — assume correct custom order
+    # If already 14 keypoints – assume correct custom order
     if n_kps == 14:
         return yolo_kps.copy()
 
-    # If 17 -> map COCO -> custom 14 (same mapping as you intended)
+    # If 17 -> map COCO -> custom 14
     if n_kps == 17:
         left_shoulder, right_shoulder = yolo_kps[5], yolo_kps[6]
         if has_conf:
@@ -82,7 +82,6 @@ def to_custom_keypoints(yolo_kps):
         ]
         return np.array(custom)
 
-    # unsupported count
     print(f"[DEBUG] to_custom_keypoints: unsupported keypoint count = {n_kps}")
     return None
 
@@ -108,10 +107,10 @@ def save_results_as_coco(
     
     # COCO structure
     info = {
-        "description": "YOLO Pose with RF-DETR Boxing Classes",
+        "description": "YOLO V8-m Pose with multi-class Boxing Classes",
         "version": "1.0",
         "year": datetime.now().year,
-        "contributor": "YOLO + RF-DETR Pipeline",
+        "contributor": "YOLOv8m Pipeline",
         "date_created": datetime.now().strftime("%Y/%m/%d")
     }
     
@@ -124,15 +123,15 @@ def save_results_as_coco(
     # Define categories for BOTH boxer types
     categories = [
         {
-            "id": 0,
-            "name": "boxer_blue",
+            "id": 1,
+            "name": "boxer_red",
             "supercategory": "person",
             "keypoints": KEYPOINT_NAMES,
             "skeleton": SKELETON_CONNECTIONS
         },
         {
-            "id": 1,
-            "name": "boxer_red",
+            "id": 2,
+            "name": "boxer_blue",
             "supercategory": "person",
             "keypoints": KEYPOINT_NAMES,
             "skeleton": SKELETON_CONNECTIONS
@@ -154,9 +153,7 @@ def save_results_as_coco(
             "date_captured": ""
         })
 
-        # Get class information from RF-DETR
-        class_names = getattr(result, 'class_names', [])
-        
+        # Check if we have keypoints
         if not hasattr(result, 'keypoints') or result.keypoints is None:
             print(f"[DEBUG] Image {img_id} ({img_path.name}): No keypoints")
             continue
@@ -166,9 +163,23 @@ def save_results_as_coco(
         if hasattr(result.keypoints, 'conf') and result.keypoints.conf is not None:
             kp_conf = result.keypoints.conf
         
+        # Get bounding boxes
         bboxes = None
         if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
             bboxes = result.boxes.xyxy
+        
+        # **CRITICAL: Extract class IDs from boxes**
+        class_ids = None
+        if hasattr(result, 'boxes') and result.boxes is not None:
+            if hasattr(result.boxes, 'cls') and result.boxes.cls is not None:
+                class_ids = result.boxes.cls.cpu().numpy()
+                print(f"[DEBUG] Image {img_id}: Found {len(class_ids)} class IDs: {class_ids}")
+            else:
+                print(f"[WARNING] Image {img_id}: boxes exist but no 'cls' attribute")
+        
+        # Get class names from model
+        class_names_dict = getattr(result, 'names', {})
+        print(f"[DEBUG] Image {img_id}: Model class names: {class_names_dict}")
         
         # Convert to numpy
         keypoints_np = keypoints.cpu().numpy()
@@ -185,18 +196,25 @@ def save_results_as_coco(
             keypoints_with_conf = keypoints_np
         
         # Process each detected person
-        for person_idx in range(keypoints_np.shape[0]):
-            # Determine category from RF-DETR class names
-            category_id = 0  # default to boxer_blue
-            
-            if class_names and person_idx < len(class_names):
-                class_name = class_names[person_idx]
-                category_id = 1 if class_name == "boxer_red" else 0
-                print(f"[DEBUG] Image {img_id}, Person {person_idx}: {class_name} -> cat {category_id}")
+        num_detections = keypoints_np.shape[0]
+        for person_idx in range(num_detections):
+            # Determine category from class IDs
+            if class_ids is not None and person_idx < len(class_ids):
+                yolo_class_id = int(class_ids[person_idx])
+                class_name = class_names_dict.get(yolo_class_id, "unknown")
+                
+                # Map YOLO class ID (0-indexed) to COCO category ID (1-indexed)
+                # YOLO: 0=boxer_red, 1=boxer_blue
+                # COCO: 1=boxer_red, 2=boxer_blue
+                category_id = yolo_class_id + 1  # Simply add 1 to convert 0-indexed to 1-indexed
+                
+                print(f"[INFO] Image {img_id}, Person {person_idx}: YOLO class {yolo_class_id} ({class_name}) -> COCO category {category_id}")
             else:
-                print(f"[WARNING] Image {img_id}, Person {person_idx}: No class, using blue")
+                # No class information available - default to boxer_red
+                category_id = 1
+                print(f"[WARNING] Image {img_id}, Person {person_idx}: No class info, defaulting to category {category_id}")
             
-            # Convert keypoints once
+            # Convert keypoints
             kp = to_custom_keypoints(keypoints_with_conf[person_idx])
             if kp is None:
                 print(f"[DEBUG] Image {img_id}, Person {person_idx}: Keypoint conversion failed")
@@ -209,7 +227,6 @@ def save_results_as_coco(
             for point in kp:
                 if point.shape[0] == 3:
                     x, y, conf = point
-                    # More lenient visibility threshold
                     if conf > 0.3:
                         v = 2
                         num_visible += 1
@@ -229,7 +246,7 @@ def save_results_as_coco(
             
             # Keep annotations with at least 3 visible keypoints
             if num_visible < 3:
-                print(f"[DEBUG] Image {img_id}, Person {person_idx}: Only {num_visible} visible")
+                print(f"[DEBUG] Image {img_id}, Person {person_idx}: Only {num_visible} visible keypoints")
                 continue
             
             # Calculate bbox
@@ -280,6 +297,6 @@ def save_results_as_coco(
     print(f"[INFO] Total annotations: {len(annotations)}")
     
     # Print category breakdown
-    blue_count = sum(1 for ann in annotations if ann['category_id'] == 0)
     red_count = sum(1 for ann in annotations if ann['category_id'] == 1)
-    print(f"[INFO] Boxer Blue: {blue_count}, Boxer Red: {red_count}")
+    blue_count = sum(1 for ann in annotations if ann['category_id'] == 2)
+    print(f"[INFO] Boxer Red: {red_count}, Boxer Blue: {blue_count}")
