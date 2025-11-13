@@ -536,119 +536,18 @@ def run_yolo_training(
 
 # =================================================================================================================================================
 
-# def run_yolo_inference(
-#     model_name: str, 
-#     device: str = "0",
-#     conf: float = 0.2,
-#     **kwargs # Accept other args
-# ) -> bool:
-#     """
-#     Runs YOLO inference on test images and saves results as COCO JSON.
-#     (Content is copied directly from original inference.py:run_inference)
-#     """
-
-#     print(f"\n--- YOLOv8 Inference Pipeline ({model_name}) ---")
-#     model_path = MODELS_ROOT / model_name / "best.pt"
-#     if not model_path.exists():
-#         print(f"❌ Model not found: {model_path}")
-#         return False
-
-#     print(f"Loading YOLO model from: {model_path}")
-#     model = YOLO(str(model_path))
-
-#     # Collect test images (sorted for consistency)
-#     image_paths = sorted([
-#         p for p in IMAGES_TEST.glob("*") 
-#         if p.suffix.lower() in [".jpg", ".jpeg", ".png"]
-#     ])
-    
-#     if not image_paths:
-#         print(f"No test images found at: {IMAGES_TEST}")
-#         return True # Not an error if no test images
-
-#     print(f"Found {len(image_paths)} test images")
-#     print(f"Running inference with confidence threshold: {conf}")
-    
-#     # Run inference
-#     results = model.predict(
-#         source=[str(p) for p in image_paths],
-#         imgsz=640,
-#         save=False,
-#         device=device,
-#         conf=conf,
-#         verbose=True
-#     )
-
-#     results = list(results)
-#     print(f"\nConverting YOLO results to COCO format...")
-    
-#     # Convert results to COCO format and save
-#     save_results_as_coco(
-#         results=results,
-#         image_paths=image_paths,
-#         out_json=OUT_TEST_JSON,
-#         overwrite=True
-#     )
-
-#     print(f"✅ YOLO Inference complete! COCO annotations saved to: {OUT_TEST_JSON}")
-#     return True
-
-# =========================================================================================================================================
-
-def get_next_output_number(output_dir):
-    """Find the next available output number"""
-    existing_files = list(output_dir.glob("output_*.mp4"))
-    if not existing_files:
-        return 1
-    
-    numbers = []
-    for file in existing_files:
-        try:
-            num = int(file.stem.split('_')[1])
-            numbers.append(num)
-        except (IndexError, ValueError):
-            continue
-    
-    return max(numbers) + 1 if numbers else 1
-
-def select_video_file():
-    """Open file dialog to select video"""
-    root = Tk()
-    root.withdraw()
-    root.attributes('-topmost', True)
-    
-    file_path = filedialog.askopenfilename(
-        title="Select Video File",
-        filetypes=[
-            ("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv *.flv"),
-            ("All files", "*.*")
-        ]
-    )
-    root.destroy()
-    return file_path
-
 def run_yolo_inference(
     model_name: str, 
     device: str = "0",
-    conf: float = 0.7,
-    target_fps: int = 25,
+    conf: float = 0.2,
     **kwargs # Accept other args
 ) -> bool:
     """
-    Runs YOLO inference on a selected video and saves annotated output with connected keypoints.
-    
-    Args:
-        model_name: Name of the model folder
-        device: GPU device (e.g., "0" for cuda:0)
-        conf: Confidence threshold
-        target_fps: Target FPS for processing and output (default: 25)
-    """    
-    # Ensure conf is Python float, not numpy float
-    conf = float(conf)
+    Runs YOLO inference on test images and saves results as COCO JSON.
+    (Content is copied directly from original inference.py:run_inference)
+    """
 
     print(f"\n--- YOLOv8 Inference Pipeline ({model_name}) ---")
-    
-    # Model path (unchanged)
     model_path = MODELS_ROOT / model_name / "best.pt"
     if not model_path.exists():
         print(f"❌ Model not found: {model_path}")
@@ -657,175 +556,276 @@ def run_yolo_inference(
     print(f"Loading YOLO model from: {model_path}")
     model = YOLO(str(model_path))
 
-    # Select video using tkinter
-    print("\nPlease select a video file...")
-    video_path = select_video_file()
+    # Collect test images (sorted for consistency)
+    image_paths = sorted([
+        p for p in IMAGES_TEST.glob("*") 
+        if p.suffix.lower() in [".jpg", ".jpeg", ".png"]
+    ])
     
-    if not video_path:
-        print("No video file selected. Exiting...")
-        return False
-    
-    print(f"Selected video: {video_path}")
-    
-    # Setup output directory (unchanged)
-    output_dir = Path(__file__).resolve().parents[2] / "data" / "outputs"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Get next output number
-    output_num = get_next_output_number(output_dir)
-    output_path = output_dir / f"output_{output_num}.mp4"
-    
-    # Open video to get properties
-    cap = cv2.VideoCapture(video_path)
-    original_fps = int(cap.get(cv2.CAP_PROP_FPS))
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cap.release()
-    
-    print(f"Original video: {width}x{height} @ {original_fps} FPS, {total_frames} frames")
-    print(f"Target FPS: {target_fps}")
-    print(f"Output will be saved as: {output_path}")
+    if not image_paths:
+        print(f"No test images found at: {IMAGES_TEST}")
+        return True # Not an error if no test images
+
+    print(f"Found {len(image_paths)} test images")
     print(f"Running inference with confidence threshold: {conf}")
-    print("Starting pose estimation...\n")
     
-    # Calculate frame skip interval
-    frame_skip = max(1, round(original_fps / target_fps))
+    # Run inference
+    results = model.predict(
+        source=[str(p) for p in image_paths],
+        imgsz=640,
+        save=False,
+        device=device,
+        conf=conf,
+        verbose=True
+    )
+
+    results = list(results)
+    print(f"\nConverting YOLO results to COCO format...")
     
-    # Open video for reading
-    cap = cv2.VideoCapture(video_path)
-    
-    # Setup video writer
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(str(output_path), fourcc, target_fps, (width, height))
-    
-    frame_idx = 0
-    processed_frames = 0
-    
-    # Custom 14 keypoint skeleton connections
-    # Keypoints: left_shoulder(0), right_shoulder(1), left_hip(2), right_hip(3),
-    #            left_knee(4), right_knee(5), left_ankle(6), right_ankle(7),
-    #            left_elbow(8), left_wrist(9), right_elbow(10), right_wrist(11),
-    #            neck(12), nose(13)
-    # Convert from 1-indexed to 0-indexed
-    skeleton = [
-        (8, 9),   # left_elbow to left_wrist
-        (0, 2),   # left_shoulder to left_hip
-        (1, 3),   # right_shoulder to right_hip
-        (0, 1),   # left_shoulder to right_shoulder
-        (2, 3),   # left_hip to right_hip
-        (5, 7),   # right_knee to right_ankle
-        (3, 5),   # right_hip to right_knee
-        (4, 6),   # left_knee to left_ankle
-        (10, 11), # right_elbow to right_wrist
-        (13, 12), # nose to neck
-        (0, 12),  # left_shoulder to neck
-        (12, 1),  # neck to right_shoulder
-        (1, 10),  # right_shoulder to right_elbow
-        (0, 8),   # left_shoulder to left_elbow
-        (2, 4)    # left_hip to left_knee
-    ]
-    
-    try:
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            # Skip frames to match target FPS
-            if frame_idx % frame_skip != 0:
-                frame_idx += 1
-                continue
-            
-            # Run inference on single frame
-            results = model.predict(
-                source=frame,
-                imgsz=640,
-                save=False,
-                device=device,
-                conf=conf,
-                verbose=False
-            )
-            
-            # Start with original frame
-            annotated_frame = frame.copy()
-            
-            # Draw bounding boxes and keypoints
-            if results[0].keypoints is not None and len(results[0].keypoints) > 0:
-                keypoints = results[0].keypoints.xy.cpu().numpy()  # Shape: (num_persons, num_keypoints, 2)
-                
-                # Draw for each detected person
-                for person_kpts in keypoints:
-                    # Draw skeleton connections
-                    for start_idx, end_idx in skeleton:
-                        if start_idx < len(person_kpts) and end_idx < len(person_kpts):
-                            start_point = person_kpts[start_idx]
-                            end_point = person_kpts[end_idx]
-                            
-                            # Only draw if both keypoints are detected (not at 0,0)
-                            if (start_point[0] > 0 and start_point[1] > 0 and 
-                                end_point[0] > 0 and end_point[1] > 0):
-                                cv2.line(
-                                    annotated_frame,
-                                    (int(start_point[0]), int(start_point[1])),
-                                    (int(end_point[0]), int(end_point[1])),
-                                    (0, 255, 0),  # Green color
-                                    2,            # Line thickness
-                                    cv2.LINE_AA
-                                )
-                    
-                    # Draw keypoints on top of lines
-                    for kpt in person_kpts:
-                        if kpt[0] > 0 and kpt[1] > 0:  # Only draw if keypoint is detected
-                            cv2.circle(
-                                annotated_frame,
-                                (int(kpt[0]), int(kpt[1])),
-                                5,              # Radius
-                                (0, 0, 255),    # Red color
-                                -1,             # Filled circle
-                                cv2.LINE_AA
-                            )
-            
-            # Draw bounding boxes if available
-            if results[0].boxes is not None and len(results[0].boxes) > 0:
-                boxes = results[0].boxes.xyxy.cpu().numpy()
-                confidences = results[0].boxes.conf.cpu().numpy()
-                
-                for box, conf_val in zip(boxes, confidences):
-                    x1, y1, x2, y2 = map(int, box)
-                    # Convert numpy float to Python float
-                    conf_float = float(conf_val)
-                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                    cv2.putText(
-                        annotated_frame,
-                        f'{conf_float:.2f}',
-                        (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (255, 0, 0),
-                        2
-                    )
-            
-            # Write frame
-            out.write(annotated_frame)
-            
-            processed_frames += 1
-            frame_idx += 1
-            
-            # Print progress every 50 frames
-            if processed_frames % 50 == 0:
-                progress = (frame_idx / total_frames) * 100
-                print(f"Processing: {progress:.1f}% (Frame {frame_idx}/{total_frames}, Output frames: {processed_frames})")
-    
-    except Exception as e:
-        print(f"\n❌ Error during processing: {e}")
-        return False
-    
-    finally:
-        cap.release()
-        out.release()
-    
-    print(f"\n✅ YOLO Inference complete!")
-    print(f"   Processed {processed_frames} frames from {total_frames} total frames")
-    print(f"   Video saved to: {output_path}")
+    # Convert results to COCO format and save
+    save_results_as_coco(
+        results=results,
+        image_paths=image_paths,
+        out_json=OUT_TEST_JSON,
+        overwrite=True
+    )
+
+    print(f"✅ YOLO Inference complete! COCO annotations saved to: {OUT_TEST_JSON}")
     return True
+
+# =========================================================================================================================================
+
+# def get_next_output_number(output_dir):
+#     """Find the next available output number"""
+#     existing_files = list(output_dir.glob("output_*.mp4"))
+#     if not existing_files:
+#         return 1
+    
+#     numbers = []
+#     for file in existing_files:
+#         try:
+#             num = int(file.stem.split('_')[1])
+#             numbers.append(num)
+#         except (IndexError, ValueError):
+#             continue
+    
+#     return max(numbers) + 1 if numbers else 1
+
+# def select_video_file():
+#     """Open file dialog to select video"""
+#     root = Tk()
+#     root.withdraw()
+#     root.attributes('-topmost', True)
+    
+#     file_path = filedialog.askopenfilename(
+#         title="Select Video File",
+#         filetypes=[
+#             ("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv *.flv"),
+#             ("All files", "*.*")
+#         ]
+#     )
+#     root.destroy()
+#     return file_path
+
+# def run_yolo_inference(
+#     model_name: str, 
+#     device: str = "0",
+#     conf: float = 0.7,
+#     target_fps: int = 25,
+#     **kwargs # Accept other args
+# ) -> bool:
+#     """
+#     Runs YOLO inference on a selected video and saves annotated output with connected keypoints.
+    
+#     Args:
+#         model_name: Name of the model folder
+#         device: GPU device (e.g., "0" for cuda:0)
+#         conf: Confidence threshold
+#         target_fps: Target FPS for processing and output (default: 25)
+#     """    
+#     # Ensure conf is Python float, not numpy float
+#     conf = float(conf)
+
+#     print(f"\n--- YOLOv8 Inference Pipeline ({model_name}) ---")
+    
+#     # Model path (unchanged)
+#     model_path = MODELS_ROOT / model_name / "best.pt"
+#     if not model_path.exists():
+#         print(f"❌ Model not found: {model_path}")
+#         return False
+
+#     print(f"Loading YOLO model from: {model_path}")
+#     model = YOLO(str(model_path))
+
+#     # Select video using tkinter
+#     print("\nPlease select a video file...")
+#     video_path = select_video_file()
+    
+#     if not video_path:
+#         print("No video file selected. Exiting...")
+#         return False
+    
+#     print(f"Selected video: {video_path}")
+    
+#     # Setup output directory (unchanged)
+#     output_dir = Path(__file__).resolve().parents[2] / "data" / "outputs"
+#     output_dir.mkdir(parents=True, exist_ok=True)
+    
+#     # Get next output number
+#     output_num = get_next_output_number(output_dir)
+#     output_path = output_dir / f"output_{output_num}.mp4"
+    
+#     # Open video to get properties
+#     cap = cv2.VideoCapture(video_path)
+#     original_fps = int(cap.get(cv2.CAP_PROP_FPS))
+#     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+#     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+#     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+#     cap.release()
+    
+#     print(f"Original video: {width}x{height} @ {original_fps} FPS, {total_frames} frames")
+#     print(f"Target FPS: {target_fps}")
+#     print(f"Output will be saved as: {output_path}")
+#     print(f"Running inference with confidence threshold: {conf}")
+#     print("Starting pose estimation...\n")
+    
+#     # Calculate frame skip interval
+#     frame_skip = max(1, round(original_fps / target_fps))
+    
+#     # Open video for reading
+#     cap = cv2.VideoCapture(video_path)
+    
+#     # Setup video writer
+#     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+#     out = cv2.VideoWriter(str(output_path), fourcc, target_fps, (width, height))
+    
+#     frame_idx = 0
+#     processed_frames = 0
+    
+#     # Custom 14 keypoint skeleton connections
+#     # Keypoints: left_shoulder(0), right_shoulder(1), left_hip(2), right_hip(3),
+#     #            left_knee(4), right_knee(5), left_ankle(6), right_ankle(7),
+#     #            left_elbow(8), left_wrist(9), right_elbow(10), right_wrist(11),
+#     #            neck(12), nose(13)
+#     # Convert from 1-indexed to 0-indexed
+#     skeleton = [
+#         (8, 9),   # left_elbow to left_wrist
+#         (0, 2),   # left_shoulder to left_hip
+#         (1, 3),   # right_shoulder to right_hip
+#         (0, 1),   # left_shoulder to right_shoulder
+#         (2, 3),   # left_hip to right_hip
+#         (5, 7),   # right_knee to right_ankle
+#         (3, 5),   # right_hip to right_knee
+#         (4, 6),   # left_knee to left_ankle
+#         (10, 11), # right_elbow to right_wrist
+#         (13, 12), # nose to neck
+#         (0, 12),  # left_shoulder to neck
+#         (12, 1),  # neck to right_shoulder
+#         (1, 10),  # right_shoulder to right_elbow
+#         (0, 8),   # left_shoulder to left_elbow
+#         (2, 4)    # left_hip to left_knee
+#     ]
+    
+#     try:
+#         while cap.isOpened():
+#             ret, frame = cap.read()
+#             if not ret:
+#                 break
+            
+#             # Skip frames to match target FPS
+#             if frame_idx % frame_skip != 0:
+#                 frame_idx += 1
+#                 continue
+            
+#             # Run inference on single frame
+#             results = model.predict(
+#                 source=frame,
+#                 imgsz=640,
+#                 save=False,
+#                 device=device,
+#                 conf=conf,
+#                 verbose=False
+#             )
+            
+#             # Start with original frame
+#             annotated_frame = frame.copy()
+            
+#             # Draw bounding boxes and keypoints
+#             if results[0].keypoints is not None and len(results[0].keypoints) > 0:
+#                 keypoints = results[0].keypoints.xy.cpu().numpy()  # Shape: (num_persons, num_keypoints, 2)
+                
+#                 # Draw for each detected person
+#                 for person_kpts in keypoints:
+#                     # Draw skeleton connections
+#                     for start_idx, end_idx in skeleton:
+#                         if start_idx < len(person_kpts) and end_idx < len(person_kpts):
+#                             start_point = person_kpts[start_idx]
+#                             end_point = person_kpts[end_idx]
+                            
+#                             # Only draw if both keypoints are detected (not at 0,0)
+#                             if (start_point[0] > 0 and start_point[1] > 0 and 
+#                                 end_point[0] > 0 and end_point[1] > 0):
+#                                 cv2.line(
+#                                     annotated_frame,
+#                                     (int(start_point[0]), int(start_point[1])),
+#                                     (int(end_point[0]), int(end_point[1])),
+#                                     (0, 255, 0),  # Green color
+#                                     2,            # Line thickness
+#                                     cv2.LINE_AA
+#                                 )
+                    
+#                     # Draw keypoints on top of lines
+#                     for kpt in person_kpts:
+#                         if kpt[0] > 0 and kpt[1] > 0:  # Only draw if keypoint is detected
+#                             cv2.circle(
+#                                 annotated_frame,
+#                                 (int(kpt[0]), int(kpt[1])),
+#                                 5,              # Radius
+#                                 (0, 0, 255),    # Red color
+#                                 -1,             # Filled circle
+#                                 cv2.LINE_AA
+#                             )
+            
+#             # Draw bounding boxes if available
+#             if results[0].boxes is not None and len(results[0].boxes) > 0:
+#                 boxes = results[0].boxes.xyxy.cpu().numpy()
+#                 confidences = results[0].boxes.conf.cpu().numpy()
+                
+#                 for box, conf_val in zip(boxes, confidences):
+#                     x1, y1, x2, y2 = map(int, box)
+#                     # Convert numpy float to Python float
+#                     conf_float = float(conf_val)
+#                     cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+#                     cv2.putText(
+#                         annotated_frame,
+#                         f'{conf_float:.2f}',
+#                         (x1, y1 - 10),
+#                         cv2.FONT_HERSHEY_SIMPLEX,
+#                         0.5,
+#                         (255, 0, 0),
+#                         2
+#                     )
+            
+#             # Write frame
+#             out.write(annotated_frame)
+            
+#             processed_frames += 1
+#             frame_idx += 1
+            
+#             # Print progress every 50 frames
+#             if processed_frames % 50 == 0:
+#                 progress = (frame_idx / total_frames) * 100
+#                 print(f"Processing: {progress:.1f}% (Frame {frame_idx}/{total_frames}, Output frames: {processed_frames})")
+    
+#     except Exception as e:
+#         print(f"\n❌ Error during processing: {e}")
+#         return False
+    
+#     finally:
+#         cap.release()
+#         out.release()
+    
+#     print(f"\n✅ YOLO Inference complete!")
+#     print(f"   Processed {processed_frames} frames from {total_frames} total frames")
+#     print(f"   Video saved to: {output_path}")
+#     return True

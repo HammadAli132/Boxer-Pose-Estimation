@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--imgsz", type=int, default=IMGSZ)
     parser.add_argument("--batch", type=int, default=DEFAULT_BATCH)
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
-    parser.add_argument("--no-resume", action="store_true")
+    parser.add_argument("--resume_from_best", action="store_true")
     args = parser.parse_args()
     
     # Convert args to a dictionary for easy passing

@@ -21,12 +21,15 @@ def menu():
 def run_model_selection(script_name):
     print(f"\n--- Model Selection for {script_name.title()} ---")
     print("1. YOLOv8s-Pose")
-    print("2. DinoV2-ViTS14 (Top-Down)")
+    print("2. YOLOv8m-Pose")
+    print("3. DinoV2-ViTS14 (Top-Down)")
     model_choice = input("Select model (1 or 2): ").strip()
     
     if model_choice == "1":
         model_name = "yolov8s-pose"
     elif model_choice == "2":
+        model_name = "yolov8m-pose"
+    elif model_choice == "3":
         model_name = "dinov2_vits14" # This is our new model identifier
     else:
         print("❌ Invalid model choice.")
