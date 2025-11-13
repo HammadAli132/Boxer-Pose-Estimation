@@ -12,6 +12,7 @@ def menu():
     print("5. Run inference")
     print("6. Visualize results")
     print("7. Rename COCO frame annotations")
+    print("8: Cleanup/Convert Annotations")
     print("0. Exit")
     choice = input("\nEnter your choice: ").strip()
     return choice
@@ -71,7 +72,9 @@ if __name__ == "__main__":
         elif choice == "6":
             run_script("src.utils.visualize")
         elif choice == "7":
-            run_script("src.utils.rename_frames")
+            run_script("src.data_processing.rename_frames")
+        elif choice == "8":
+            run_script("src.data_processing.annotations_cleaner")
         elif choice == "0":
             print("👋 Exiting... Bye!")
             sys.exit(0)

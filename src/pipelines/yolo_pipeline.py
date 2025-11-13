@@ -286,6 +286,256 @@ def run_yolo_training(
     return True
 
 # def run_yolo_inference(
+#     model_name: str,
+#     device: str = "0",
+#     conf: float = 0.2,
+#     **kwargs
+# ) -> bool:
+#     """
+#     Enhanced YOLOv8 inference pipeline with proper class tracking.
+#     """
+    
+#     def compute_iou(box1, box2):
+#         """Calculate IoU between two boxes [x1, y1, x2, y2]."""
+#         x1 = max(box1[0], box2[0])
+#         y1 = max(box1[1], box2[1])
+#         x2 = min(box1[2], box2[2])
+#         y2 = min(box1[3], box2[3])
+        
+#         intersection = max(0, x2 - x1) * max(0, y2 - y1)
+#         area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+#         area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+#         union = area1 + area2 - intersection
+        
+#         return intersection / union if union > 0 else 0
+    
+#     print(f"\n--- YOLOv8 Inference Pipeline ({model_name}) ---")
+
+#     model_path = MODELS_ROOT / model_name / "best.pt"
+#     if not model_path.exists():
+#         print(f"❌ Model not found: {model_path}")
+#         print(f"💡 Did you train the model? Run training first with 14 keypoints.")
+#         return False
+
+#     print(f"📦 Loading model from: {model_path}")
+#     model = YOLO(str(model_path))
+    
+#     # Verify model has correct number of keypoints
+#     if hasattr(model.model, 'kpt_shape'):
+#         kpt_shape = model.model.kpt_shape
+#         print(f"🔍 Model keypoint shape: {kpt_shape}")
+#         if kpt_shape[0] != 14:
+#             print(f"❌ ERROR: Model expects {kpt_shape[0]} keypoints, but we need 14!")
+#             print(f"💡 You need to train a custom model with 14 keypoints first.")
+#             return False
+#     device = "cuda" if torch.cuda.is_available() else device
+#     print(f"Using device: {device}")
+
+#     image_paths = sorted([
+#         p for p in IMAGES_TEST.glob("*")
+#         if p.suffix.lower() in [".jpg", ".jpeg", ".png"]
+#     ])
+#     if not image_paths:
+#         print(f"❌ No test images found at: {IMAGES_TEST}")
+#         return False
+
+#     print(f"Found {len(image_paths)} test images")
+
+#     all_results: list[Results] = []
+
+#     for img_id, img_path in enumerate(image_paths, start=1):
+#         image = Image.open(img_path).convert("RGB")
+#         W, H = image.width, image.height
+
+#         # Load RF-DETR annotations
+#         annotation_path = RFDETR_ANNOTS_DIR / f"{img_path.stem}.json"
+#         detections = []
+#         if annotation_path.exists():
+#             with open(annotation_path, "r", encoding="utf-8") as f:
+#                 data = json.load(f)
+#                 detections = data.get("detections", [])
+
+#         # --- CASE 1: Use crops if detections exist ---
+#         if detections:
+#             print(f"→ Processing {img_path.name}: {len(detections)} RF-DETR detections")
+#             combined_kps = []
+#             combined_boxes = []
+#             combined_classes = []  # Track class names
+
+#             for det_idx, det in enumerate(detections):
+#                 bbox_xyxy = det["bbox_xyxy"]
+#                 class_name = det.get("class_name", "boxer_blue")  # Get class from RF-DETR
+                
+#                 x1, y1, x2, y2 = map(int, bbox_xyxy)
+#                 x1, y1 = max(0, x1), max(0, y1)
+#                 x2, y2 = min(W, x2), min(H, y2)
+                
+#                 crop_w, crop_h = x2 - x1, y2 - y1
+                
+#                 print(f"  🔍 Detection {det_idx} ({class_name}): bbox=({x1},{y1},{x2},{y2}), size={crop_w}x{crop_h}")
+                
+#                 # More lenient crop size check
+#                 if crop_w <= 0 or crop_h <= 0 or crop_w < 30 or crop_h < 30:
+#                     print(f"  ⚠️ Skipping too-small crop: {crop_w}x{crop_h}")
+#                     continue
+
+#                 # Add padding to crops for better detection
+#                 pad = 20
+#                 x1_pad = max(0, x1 - pad)
+#                 y1_pad = max(0, y1 - pad)
+#                 x2_pad = min(W, x2 + pad)
+#                 y2_pad = min(H, y2 + pad)
+                
+#                 cropped = image.crop((x1_pad, y1_pad, x2_pad, y2_pad))
+#                 pad_offset_x = x1_pad
+#                 pad_offset_y = y1_pad
+
+#                 # Lower confidence threshold for crops
+#                 results = model.predict(
+#                     cropped,
+#                     imgsz=640,
+#                     device=device,
+#                     conf=0.2,  # Lower threshold
+#                     verbose=False
+#                 )
+
+#                 if not results or len(results) == 0:
+#                     print(f"  ⚠️ No YOLO results for detection {det_idx}")
+#                     continue
+
+#                 res = results[0]
+#                 if not hasattr(res, "keypoints") or res.keypoints is None or len(res.keypoints) == 0:
+#                     print(f"  ⚠️ No keypoints for detection {det_idx} (model returned {len(res.boxes) if hasattr(res, 'boxes') else 0} boxes)")
+#                     continue
+
+#                 # Get ALL detections (not just best one)
+#                 kp_data = res.keypoints.data.cpu().numpy()
+#                 boxes = res.boxes.xyxy.cpu().numpy()
+#                 confs = res.boxes.conf.cpu().numpy()
+                
+#                 print(f"  📊 YOLO found {len(kp_data)} detections with confs: {confs}")
+                
+#                 if len(kp_data) == 0:
+#                     continue
+                
+#                 # Keep ALL detections, but filter by confidence
+#                 valid_mask = confs > 0.2
+#                 kp_data = kp_data[valid_mask]
+#                 boxes = boxes[valid_mask]
+                
+#                 if len(kp_data) == 0:
+#                     print(f"  ⚠️ No detections above confidence threshold")
+#                     continue
+                
+#                 # Shift keypoints to original frame coordinates (accounting for padding)
+#                 kp_data[..., 0] += pad_offset_x  # x coordinates
+#                 kp_data[..., 1] += pad_offset_y  # y coordinates
+                
+#                 # Shift boxes
+#                 boxes[:, [0, 2]] += pad_offset_x
+#                 boxes[:, [1, 3]] += pad_offset_y
+
+#                 combined_kps.append(kp_data)
+#                 combined_boxes.append(boxes)
+#                 # Store class name for EACH detection in this crop
+#                 combined_classes.extend([class_name] * len(kp_data))
+                
+#                 print(f"  ✅ Detection {det_idx} ({class_name}): {len(kp_data)} poses found")
+
+#             if combined_kps:
+#                 # Merge all detections from this image
+#                 kps_final = np.concatenate(combined_kps, axis=0)
+#                 boxes_final = np.concatenate(combined_boxes, axis=0)
+
+#                 # Convert to torch
+#                 boxes_crops = torch.tensor(boxes_final, dtype=torch.float32)
+#                 conf_t = torch.ones((boxes_crops.shape[0], 1)) * 0.99
+#                 cls_t = torch.zeros((boxes_crops.shape[0], 1))
+#                 boxes_yolo = torch.cat([boxes_crops, conf_t, cls_t], dim=1)
+
+#                 # Construct synthetic YOLO Results object
+#                 result_obj = Results(
+#                     orig_img=np.array(image),
+#                     path=str(img_path),
+#                     names=model.names,
+#                     boxes=boxes_yolo,
+#                     keypoints=torch.tensor(kps_final, dtype=torch.float32),
+#                 )
+                
+#                 # **CRITICAL**: Attach class names to Results object
+#                 result_obj.class_names = combined_classes
+                
+#                 all_results.append(result_obj)
+#                 print(f"  ✅ Total poses for {img_path.name}: {len(kps_final)}")
+#             else:
+#                 # Fallback: If crops failed, try full-frame with RF-DETR class info
+#                 print(f"  ⚠️ No poses from crops, trying full-frame for {img_path.name}")
+#                 results = model.predict(
+#                     source=str(img_path),
+#                     imgsz=640,
+#                     device=device,
+#                     conf=conf,
+#                     verbose=False
+#                 )
+#                 if results and len(results[0].keypoints) > 0:
+#                     # Try to match detections to RF-DETR classes by IoU
+#                     results[0].class_names = []
+#                     yolo_boxes = results[0].boxes.xyxy.cpu().numpy()
+                    
+#                     for yolo_box in yolo_boxes:
+#                         best_match = "boxer_blue"
+#                         best_iou = 0
+#                         for det in detections:
+#                             rf_box = det["bbox_xyxy"]
+#                             iou = compute_iou(yolo_box, rf_box)
+#                             if iou > best_iou:
+#                                 best_iou = iou
+#                                 best_match = det.get("class_name", "boxer_blue")
+#                         results[0].class_names.append(best_match)
+                    
+#                     all_results.append(results[0])
+#                     print(f"  ✅ Full-frame found {len(results[0].keypoints)} poses")
+#                 else:
+#                     print(f"  ⚠️ No valid keypoints detected for {img_path.name}")
+
+#         # --- CASE 2: Fallback to full-frame inference ---
+#         else:
+#             print(f"→ No RF-DETR detections, using full-frame inference for {img_path.name}")
+#             results = model.predict(
+#                 source=str(img_path),
+#                 imgsz=640,
+#                 device=device,
+#                 conf=conf,
+#                 verbose=False
+#             )
+#             if results:
+#                 # Without RF-DETR, we can't determine classes
+#                 results[0].class_names = []
+#                 all_results.append(results[0])
+
+#         if img_id % 10 == 0:
+#             print(f"Progress: {img_id}/{len(image_paths)} images...")
+
+#     print(f"\n✅ Total results collected: {len(all_results)}")
+#     total_annotations = sum(len(r.keypoints) if hasattr(r, 'keypoints') and r.keypoints is not None else 0 
+#                            for r in all_results)
+#     print(f"✅ Total pose annotations: {total_annotations}")
+
+#     # Save to COCO format
+#     print(f"\nSaving results to COCO format at {OUT_TEST_JSON} ...")
+#     save_results_as_coco(
+#         results=all_results,
+#         image_paths=image_paths,
+#         out_json=OUT_TEST_JSON,
+#         overwrite=True
+#     )
+
+#     print(f"✅ Inference complete. COCO annotations saved to: {OUT_TEST_JSON}")
+#     return True
+
+# =================================================================================================================================================
+
+# def run_yolo_inference(
 #     model_name: str, 
 #     device: str = "0",
 #     conf: float = 0.2,
@@ -341,6 +591,8 @@ def run_yolo_training(
 
 #     print(f"✅ YOLO Inference complete! COCO annotations saved to: {OUT_TEST_JSON}")
 #     return True
+
+# =========================================================================================================================================
 
 def get_next_output_number(output_dir):
     """Find the next available output number"""
@@ -576,161 +828,3 @@ def run_yolo_inference(
     print(f"   Processed {processed_frames} frames from {total_frames} total frames")
     print(f"   Video saved to: {output_path}")
     return True
-
-# def run_yolo_inference(
-#     model_name: str,
-#     device: str = "0",
-#     conf: float = 0.2,
-#     **kwargs
-# ) -> bool:
-#     """
-#     Unified YOLOv8 inference pipeline that:
-#     1. Uses RF-DETR bounding boxes (if available) to crop and run YOLOv8 pose estimation.
-#     2. Falls back to standard full-frame inference if no RF-DETR detections exist.
-#     3. Saves results as COCO JSON using save_results_as_coco().
-#     """
-
-#     print(f"\n--- YOLOv8 Inference Pipeline ({model_name}) ---")
-
-#     model_path = MODELS_ROOT / model_name / "best.pt"
-#     if not model_path.exists():
-#         print(f"❌ Model not found: {model_path}")
-#         return False
-
-#     model = YOLO(str(model_path))
-#     device = "cuda" if torch.cuda.is_available() else device
-#     print(f"Using device: {device}")
-
-#     image_paths = sorted([
-#         p for p in IMAGES_TEST.glob("*")
-#         if p.suffix.lower() in [".jpg", ".jpeg", ".png"]
-#     ])
-#     if not image_paths:
-#         print(f"❌ No test images found at: {IMAGES_TEST}")
-#         return False
-
-#     print(f"Found {len(image_paths)} test images")
-
-#     all_results: list[Results] = []
-
-#     for img_id, img_path in enumerate(image_paths, start=1):
-#         image = Image.open(img_path).convert("RGB")
-#         W, H = image.width, image.height
-
-#         # Load RF-DETR annotations if available
-#         annotation_path = RFDETR_ANNOTS_DIR / f"{img_path.stem}.json"
-#         detections = []
-#         if annotation_path.exists():
-#             with open(annotation_path, "r", encoding="utf-8") as f:
-#                 data = json.load(f)
-#                 detections = data.get("detections", [])
-
-#         # --- CASE 1: Use crops if detections exist ---
-#         if detections:
-#             print(f"→ Using RF-DETR crops for {img_path.name} ({len(detections)} detections)")
-#             combined_kps, combined_boxes = [], []
-
-#             for det in detections:
-#                 bbox_xyxy = det["bbox_xyxy"]
-#                 x1, y1, x2, y2 = map(int, bbox_xyxy)
-#                 x1, y1 = max(0, x1), max(0, y1)
-#                 x2, y2 = min(W, x2), min(H, y2)
-                
-#                 crop_w, crop_h = x2 - x1, y2 - y1
-#                 if crop_w <= 0 or crop_h <= 0 or crop_w < 50 or crop_h < 50:
-#                     continue  # Skip too-small crops
-
-#                 cropped = image.crop((x1, y1, x2, y2))
-
-#                 results = model.predict(
-#                     cropped,
-#                     imgsz=min(640, max(crop_w, crop_h)),  # Don't upscale tiny crops
-#                     device=device,
-#                     conf=0.5,  # Higher threshold for crops
-#                     verbose=False
-#                 )
-
-#                 if not results or len(results) == 0:
-#                     continue
-
-#                 res = results[0]
-#                 if not hasattr(res, "keypoints") or res.keypoints is None or len(res.keypoints) == 0:
-#                     continue
-
-#                 # Get keypoints with confidence (shape: N, 17, 3)
-#                 kp_data = res.keypoints.data.cpu().numpy()
-#                 boxes = res.boxes.xyxy.cpu().numpy()
-#                 confs = res.boxes.conf.cpu().numpy()
-                
-#                 if len(kp_data) == 0:
-#                     continue
-                
-#                 # Keep only the BEST detection (highest confidence)
-#                 best_idx = confs.argmax()
-#                 kp_data = kp_data[best_idx:best_idx+1]  # Keep 3D shape
-#                 boxes = boxes[best_idx:best_idx+1]
-                
-#                 # Shift keypoints to original frame coordinates
-#                 kp_data[..., 0] += x1  # x coordinates
-#                 kp_data[..., 1] += y1  # y coordinates
-#                 # kp_data[..., 2] is confidence, don't shift
-                
-#                 # Shift boxes
-#                 boxes[:, [0, 2]] += x1
-#                 boxes[:, [1, 3]] += y1
-
-#                 combined_kps.append(kp_data)
-#                 combined_boxes.append(boxes)
-
-#             if combined_kps:
-#                 # Merge all detections from this image
-#                 kps_final = np.concatenate(combined_kps, axis=0)
-#                 boxes_final = np.concatenate(combined_boxes, axis=0)
-
-#                 # Convert to torch
-#                 boxes_crops = torch.tensor(boxes_final, dtype=torch.float32)
-#                 conf_t = torch.ones((boxes_crops.shape[0], 1)) * 0.99  # dummy conf
-#                 cls_t = torch.zeros((boxes_crops.shape[0], 1))          # class 0 (boxer)
-#                 boxes_yolo = torch.cat([boxes_crops, conf_t, cls_t], dim=1)  # shape Nx6
-
-#                 # Construct synthetic YOLO Results object
-#                 result_obj = Results(
-#                     orig_img=np.array(image),
-#                     path=str(img_path),
-#                     names=model.names,
-#                     boxes=boxes_yolo,
-#                     keypoints=torch.tensor(kps_final, dtype=torch.float32),
-#                 )
-
-#                 all_results.append(result_obj)
-#             else:
-#                 print(f"⚠️ No valid keypoints detected for {img_path.name}")
-
-#         # --- CASE 2: Fallback: Full-frame inference ---
-#         else:
-#             results = model.predict(
-#                 source=str(img_path),
-#                 imgsz=640,
-#                 device=device,
-#                 conf=conf,
-#                 verbose=False
-#             )
-#             if results:
-#                 all_results.append(results[0])
-
-#         if img_id % 50 == 0:
-#             print(f"Processed {img_id}/{len(image_paths)} images...")
-
-#     print(f"\n✅ Total results collected: {len(all_results)}")
-
-#     # --- Save to COCO format ---
-#     print(f"Saving results to COCO format at {OUT_TEST_JSON} ...")
-#     save_results_as_coco(
-#         results=all_results,
-#         image_paths=image_paths,
-#         out_json=OUT_TEST_JSON,
-#         overwrite=True
-#     )
-
-#     print(f"✅ Inference complete. COCO annotations saved to: {OUT_TEST_JSON}")
-#     return True

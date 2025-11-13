@@ -183,6 +183,20 @@ def _draw_keypoints(frame: np.ndarray, annotation: Dict) -> np.ndarray:
     """Draw keypoints and skeleton on the frame (COCO format)."""
     keypoints = annotation['keypoints']
     bbox = annotation['bbox']
+    category_id = annotation['category_id']
+
+    # Color scheme based on category
+    if category_id == 0:  # boxer_blue
+        skeleton_color = (255, 0, 0)    # Blue skeleton
+        bbox_color = (200, 100, 0)      # Orange-blue bbox
+        text_bg_color = (255, 0, 0)     # Blue text background
+    else:  # boxer_red
+        skeleton_color = (0, 0, 255)    # Red skeleton
+        bbox_color = (0, 100, 200)      # Orange-red bbox
+        text_bg_color = (0, 0, 255)     # Red text background
+    
+    keypoint_color = (0, 255, 0)        # Green keypoints
+    text_color = (255, 255, 255)        # White text
     
     # Draw bounding box (x, y, w, h format)
     x, y, w, h = map(int, bbox)
@@ -213,8 +227,10 @@ def _draw_keypoints(frame: np.ndarray, annotation: Dict) -> np.ndarray:
         if kpt is not None:
             cv2.circle(frame, (kpt[0], kpt[1]), KEYPOINT_RADIUS, KEYPOINT_COLOR, -1)
     
-    # Draw annotation ID
-    label = f"ID:{annotation['id']} Keypoints:{annotation['num_keypoints']}"
+    # Draw label with class-specific color
+    class_name = "boxer_blue" if category_id == 0 else "boxer_red"
+    label = f"{class_name} KPs:{annotation['num_keypoints']}"
+    
     (text_width, text_height), baseline = cv2.getTextSize(
         label, FONT, FONT_SCALE, FONT_THICKNESS
     )
@@ -223,7 +239,7 @@ def _draw_keypoints(frame: np.ndarray, annotation: Dict) -> np.ndarray:
         frame,
         (x, y - text_height - baseline - 5),
         (x + text_width, y),
-        BBOX_COLOR,
+        text_bg_color,
         -1
     )
     
@@ -233,7 +249,7 @@ def _draw_keypoints(frame: np.ndarray, annotation: Dict) -> np.ndarray:
         (x, y - baseline - 5),
         FONT,
         FONT_SCALE,
-        TEXT_COLOR,
+        text_color,
         FONT_THICKNESS,
         cv2.LINE_AA
     )

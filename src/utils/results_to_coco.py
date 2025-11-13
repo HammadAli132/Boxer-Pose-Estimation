@@ -93,65 +93,56 @@ def save_results_as_coco(
     out_json: Optional[Path] = None,
     overwrite: bool = True
 ):
-    """
-    Convert YOLO pose estimation results to COCO keypoints format and save as JSON.
+    """Convert YOLO pose results to COCO format with proper class tracking."""
     
-    Args:
-        results: List of YOLO Results objects from model.predict()
-        image_paths: List of Path objects pointing to the source images
-        out_json: Output path for the COCO JSON file. If None, uses default path at
-                  /data/processed/annotations/test.json
-        overwrite: If True, overwrite existing file; if False, raise error if file exists
-    """
-    # Use default path if not specified
     if out_json is None:
         out_json = DEFAULT_OUTPUT_PATH
         print(f"[INFO] Using default output path: {out_json}")
     
-    # Convert to Path object if string
     out_json = Path(out_json)
     
     if out_json.exists() and not overwrite:
-        raise FileExistsError(f"Output file already exists: {out_json}. Use overwrite=True to replace.")
+        raise FileExistsError(f"Output file exists: {out_json}")
     
-    # Ensure output directory exists
     out_json.parent.mkdir(parents=True, exist_ok=True)
     
-    # Initialize COCO structure with info and licenses
+    # COCO structure
     info = {
-        "description": "YOLO Pose to COCO Keypoints Conversion",
-        "url": "",
+        "description": "YOLO Pose with RF-DETR Boxing Classes",
         "version": "1.0",
         "year": datetime.now().year,
-        "contributor": "YOLO Pose Converter",
+        "contributor": "YOLO + RF-DETR Pipeline",
         "date_created": datetime.now().strftime("%Y/%m/%d")
     }
     
-    licenses = [{
-        "id": 1,
-        "name": "Unknown",
-        "url": ""
-    }]
+    licenses = [{"id": 1, "name": "Unknown", "url": ""}]
     
     images_info = []
     annotations = []
     ann_id = 1
     
-    # Define category with custom skeleton
-    categories = [{
-        "id": 1,
-        "name": "boxer",
-        "supercategory": "person",
-        "keypoints": KEYPOINT_NAMES,
-        "skeleton": SKELETON_CONNECTIONS
-    }]
+    # Define categories for BOTH boxer types
+    categories = [
+        {
+            "id": 0,
+            "name": "boxer_blue",
+            "supercategory": "person",
+            "keypoints": KEYPOINT_NAMES,
+            "skeleton": SKELETON_CONNECTIONS
+        },
+        {
+            "id": 1,
+            "name": "boxer_red",
+            "supercategory": "person",
+            "keypoints": KEYPOINT_NAMES,
+            "skeleton": SKELETON_CONNECTIONS
+        }
+    ]
     
-    # Process each image and its results
+    # Process each image
     for img_id, (result, img_path) in enumerate(zip(results, image_paths), start=1):
-        # Get image dimensions
         h, w = result.orig_shape
         
-        # Add image info
         images_info.append({
             "id": img_id,
             "file_name": img_path.name,
@@ -162,82 +153,92 @@ def save_results_as_coco(
             "coco_url": "",
             "date_captured": ""
         })
+
+        # Get class information from RF-DETR
+        class_names = getattr(result, 'class_names', [])
         
-        # Check if pose keypoints exist
         if not hasattr(result, 'keypoints') or result.keypoints is None:
-            print(f"[DEBUG] Image {img_id} ({img_path.name}): No keypoints attribute or keypoints is None")
+            print(f"[DEBUG] Image {img_id} ({img_path.name}): No keypoints")
             continue
         
-        # Keep tensors on original device (GPU if available) for processing
-        keypoints = result.keypoints.xy  # Shape: (num_people, 17, 2) - stays on device
-        
-        # Get confidence scores if available
+        keypoints = result.keypoints.xy
         kp_conf = None
         if hasattr(result.keypoints, 'conf') and result.keypoints.conf is not None:
-            kp_conf = result.keypoints.conf  # Shape: (num_people, 17) - stays on device
+            kp_conf = result.keypoints.conf
         
-        # Get bounding boxes if available (keep on device)
         bboxes = None
         if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
-            bboxes = result.boxes.xyxy  # Stays on device
+            bboxes = result.boxes.xyxy
         
-        # Convert to numpy only once per image
+        # Convert to numpy
         keypoints_np = keypoints.cpu().numpy()
         kp_conf_np = kp_conf.cpu().numpy() if kp_conf is not None else None
         bboxes_np = bboxes.cpu().numpy() if bboxes is not None else None
         
-        # Stack coordinates with confidence if available
+        # Stack with confidence
         if kp_conf_np is not None:
             keypoints_with_conf = np.concatenate([
                 keypoints_np, 
                 kp_conf_np[..., np.newaxis]
-            ], axis=-1)  # Shape: (num_people, 17, 3)
+            ], axis=-1)
         else:
             keypoints_with_conf = keypoints_np
         
         # Process each detected person
         for person_idx in range(keypoints_np.shape[0]):
-            # Convert to custom 14-point format
+            # Determine category from RF-DETR class names
+            category_id = 0  # default to boxer_blue
+            
+            if class_names and person_idx < len(class_names):
+                class_name = class_names[person_idx]
+                category_id = 1 if class_name == "boxer_red" else 0
+                print(f"[DEBUG] Image {img_id}, Person {person_idx}: {class_name} -> cat {category_id}")
+            else:
+                print(f"[WARNING] Image {img_id}, Person {person_idx}: No class, using blue")
+            
+            # Convert keypoints once
             kp = to_custom_keypoints(keypoints_with_conf[person_idx])
             if kp is None:
+                print(f"[DEBUG] Image {img_id}, Person {person_idx}: Keypoint conversion failed")
                 continue
             
             # Format keypoints as [x1, y1, v1, x2, y2, v2, ...]
-            # v = 0: not labeled, 1: labeled but not visible, 2: labeled and visible
             kp_with_vis = []
             num_visible = 0
             
             for point in kp:
-                if point.shape[0] == 3:  # Has confidence
+                if point.shape[0] == 3:
                     x, y, conf = point
-                    # Map confidence to visibility
-                    if conf > 0.5:
-                        v = 2  # Visible
+                    # More lenient visibility threshold
+                    if conf > 0.3:
+                        v = 2
                         num_visible += 1
                     elif conf > 0:
-                        v = 1  # Labeled but not visible
+                        v = 1
                     else:
-                        v = 0  # Not labeled
-                else:  # No confidence - 2D keypoints [x, y]
+                        v = 0
+                else:
                     x, y = point
-                    # Check if keypoint is valid (non-zero coordinates)
                     if x > 0 and y > 0:
-                        v = 2  # Default to visible for valid coordinates
+                        v = 2
                         num_visible += 1
                     else:
-                        v = 0  # Not labeled for zero coordinates
+                        v = 0
                 
                 kp_with_vis.extend([float(x), float(y), int(v)])
             
-            # Calculate or extract bounding box
+            # Keep annotations with at least 3 visible keypoints
+            if num_visible < 3:
+                print(f"[DEBUG] Image {img_id}, Person {person_idx}: Only {num_visible} visible")
+                continue
+            
+            # Calculate bbox
             if bboxes_np is not None and person_idx < len(bboxes_np):
                 x1, y1, x2, y2 = bboxes_np[person_idx]
                 bbox = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
             else:
-                # Compute bbox from keypoints
                 kp_xy = kp[:, :2] if kp.shape[1] >= 2 else kp
                 xs, ys = kp_xy[:, 0], kp_xy[:, 1]
-                # Filter out zero/invalid coordinates
                 valid_mask = (xs > 0) & (ys > 0)
                 if valid_mask.sum() == 0:
                     continue
@@ -249,13 +250,13 @@ def save_results_as_coco(
                     float(ys_valid.max() - ys_valid.min())
                 ]
             
-            # Create annotation
+            # Create annotation with correct category
             annotations.append({
                 "id": ann_id,
                 "image_id": img_id,
-                "category_id": 1,
+                "category_id": category_id,
                 "keypoints": kp_with_vis,
-                "num_keypoints": num_visible,  # Count of visible keypoints (v=2)
+                "num_keypoints": num_visible,
                 "bbox": bbox,
                 "iscrowd": 0,
                 "area": float(bbox[2] * bbox[3]),
@@ -263,7 +264,6 @@ def save_results_as_coco(
             })
             ann_id += 1
     
-    # Create full COCO JSON structure
     coco_data = {
         "info": info,
         "licenses": licenses,
@@ -272,10 +272,14 @@ def save_results_as_coco(
         "categories": categories
     }
     
-    # Save to file (overwriting if it exists)
     with open(out_json, "w") as f:
         json.dump(coco_data, f, indent=2)
     
-    print(f"[INFO] COCO annotations saved to: {out_json}")
+    print(f"\n[INFO] ✅ COCO annotations saved to: {out_json}")
     print(f"[INFO] Total images: {len(images_info)}")
     print(f"[INFO] Total annotations: {len(annotations)}")
+    
+    # Print category breakdown
+    blue_count = sum(1 for ann in annotations if ann['category_id'] == 0)
+    red_count = sum(1 for ann in annotations if ann['category_id'] == 1)
+    print(f"[INFO] Boxer Blue: {blue_count}, Boxer Red: {red_count}")
