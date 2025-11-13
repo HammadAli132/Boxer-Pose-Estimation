@@ -19,6 +19,7 @@ EPOCHS = 50
 IMGSZ = 640
 DEFAULT_BATCH = 8
 DEFAULT_WORKERS = 0
+DEFAULT_RESUME_FROM_BEST = True
 
 # --- DISPATCHER LOGIC ---
 def main():
@@ -29,7 +30,7 @@ def main():
     parser.add_argument("--imgsz", type=int, default=IMGSZ)
     parser.add_argument("--batch", type=int, default=DEFAULT_BATCH)
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
-    parser.add_argument("--resume_from_best", action="store_true")
+    parser.add_argument("--resume_from_best", type=bool, default=DEFAULT_RESUME_FROM_BEST)
     args = parser.parse_args()
     
     # Convert args to a dictionary for easy passing

@@ -17,9 +17,9 @@ kpt_shape:
 - 14
 - 3
 names:
-- quadruped
-- person
-path: D:\Repositories\Boxer-Pose-Estimation\data\processed
+- boxer_red
+- boxer_blue
+path: /home/cooper/Desktop/My Personal/Repositories/Boxer-Pose-Estimation/data/processed
 skeleton:
 - - 9
   - 10
@@ -51,5 +51,5 @@ skeleton:
   - 9
 - - 3
   - 5
-train: D:\Repositories\Boxer-Pose-Estimation\data\processed\images\train
-val: D:\Repositories\Boxer-Pose-Estimation\data\processed\images\val
+train: /home/cooper/Desktop/My Personal/Repositories/Boxer-Pose-Estimation/data/processed/images/train
+val: /home/cooper/Desktop/My Personal/Repositories/Boxer-Pose-Estimation/data/processed/images/val
