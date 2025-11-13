@@ -48,7 +48,7 @@ RUNS_ROOT = PROJECT_ROOT / "runs"  # <-- NEW: store training results here
 # -----------------------
 # Defaults
 # -----------------------
-DEFAULT_MODEL = "yolov8s-pose"
+DEFAULT_MODEL = "yolov8m-pose"
 NUM_KEYPOINTS = 14
 EPOCHS = 50
 IMGSZ = 640
@@ -57,6 +57,7 @@ DEFAULT_WORKERS = 0
 
 WEIGHTS_MAP = {
     "yolov8s-pose": "yolov8s-pose.pt",
+    "yolov8m-pose": "yolov8m-pose.pt",
     "yolov11-pose": "yolov11-pose.pt",
 }
 
@@ -115,7 +116,7 @@ def dataset_yaml_path_for(model_name: str) -> Path:
         "train": str(IMAGES_DIR / "train"),
         "val": str(IMAGES_DIR / "val"),
         "kpt_shape": [NUM_KEYPOINTS, 3],
-        "names": ["quadruped", "person"],
+        "names": ["boxer_red", "boxer_blue"],
         "keypoints": KEYPOINTS,
         "skeleton": SKELETON,
     }
