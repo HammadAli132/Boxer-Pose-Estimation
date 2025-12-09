@@ -12,7 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 # --- DEFAULT CONSTANTS ---
 DEFAULT_MODEL_NAME = "yolov8m-pose"
-DEFAULT_CONF_THRESHOLD = 0.2
+DEFAULT_CONF_THRESHOLD = 0.65
 
 # --- MAIN DISPATCHER ---
 def main():

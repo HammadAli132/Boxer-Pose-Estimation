@@ -15,7 +15,7 @@ from ..pipelines.dino_pipeline import run_dino_training
 # Defaults
 # -----------------------
 DEFAULT_MODEL = "yolov8s-pose"
-EPOCHS = 50
+EPOCHS = 100
 IMGSZ = 640
 DEFAULT_BATCH = 8
 DEFAULT_WORKERS = 0
