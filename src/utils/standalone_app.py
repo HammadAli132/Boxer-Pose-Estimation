@@ -159,7 +159,12 @@ class PoseApp:
                         (0, 0, 0), 1, cv2.LINE_AA)
 
         # Draw label
-        label = f"BOXER {class_name} | KPs:{annotation['num_keypoints']}"
+        # In _draw_keypoints, update the label:
+        track_id = annotation.get('track_id', -1)
+        if track_id >= 0:
+            label = f"ID:{track_id} | BOXER {class_name} | KPs:{annotation['num_keypoints']}"
+        else:
+            label = f"BOXER {class_name} | KPs:{annotation['num_keypoints']}"
 
         (tw, th), bl = cv2.getTextSize(label, FONT, FONT_SCALE, FONT_THICKNESS)
 
@@ -182,7 +187,7 @@ class PoseApp:
     #  🔥 UPDATED POSE PROCESSING — FULL INTEGRATION
     # ---------------------------------------------------------
     def process_video(self, start_frame, end_frame, output_path):
-        model_path = MODELS_ROOT / model_name / "best.pt"
+        model_path = MODELS_ROOT / "yolov11s-pose" / "best.pt"
         if not model_path.exists():
             raise FileNotFoundError(f"Model not found:\n{model_path}")
 
@@ -212,31 +217,35 @@ class PoseApp:
             if frame_idx > end_frame:
                 break
 
-            results = model.predict(frame, imgsz=640, conf=0.65, verbose=False)
+            # 🔥 TRACKING MODE
+            results = model.track(frame, imgsz=640, conf=0.65, persist=True, verbose=False)
 
             annotated = frame.copy()
 
-            # -------------------------------------------
-            #  Convert YOLO detections → your annotation
-            # -------------------------------------------
-            kpts = results[0].keypoints.data.cpu().numpy()      # shape: (N, K, 3)
-            boxes = results[0].boxes.xywh.cpu().numpy()         # shape: (N, 4)
-            classes = results[0].boxes.cls.cpu().numpy()        # shape: (N,)
+            kpts = results[0].keypoints.data.cpu().numpy()
+            boxes = results[0].boxes.xywh.cpu().numpy()
+            classes = results[0].boxes.cls.cpu().numpy()
+            
+            # 🔥 Get track IDs (will be None if tracking fails)
+            track_ids = results[0].boxes.id
+            if track_ids is not None:
+                track_ids = track_ids.cpu().numpy().astype(int)
 
             for i in range(len(kpts)):
-                k = kpts[i]                      # (K, 3)
-                bbox = boxes[i]                  # (4,)
-                cls = int(classes[i])            # class id from model
+                k = kpts[i]
+                bbox = boxes[i]
+                cls = int(classes[i])
+                track_id = int(track_ids[i]) if track_ids is not None else -1
 
                 annotation = {
                     "keypoints": k.flatten().tolist(),
                     "bbox": bbox.tolist(),
                     "num_keypoints": len(k),
-                    "category_id": cls if cls in [1,2] else 0,
+                    "category_id": cls if cls in [0, 1] else -1,
+                    "track_id": track_id  # 🔥 Add track ID
                 }
 
                 annotated = self._draw_keypoints(annotated, annotation)
-
 
             writer.write(annotated)
             frame_idx += 1
