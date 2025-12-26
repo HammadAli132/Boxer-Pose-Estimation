@@ -1,7 +1,7 @@
 import os
 import json
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import Dict, List
 
 import cv2
 import numpy as np
@@ -10,9 +10,7 @@ import numpy as np
 # ==================== CONFIGURATION ====================
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-# Input directories
-TEST_FRAMES_DIR = PROJECT_ROOT / "data/processed/images/test"
-ANNOTATIONS_DIR = PROJECT_ROOT / "data/processed/annotations/rf-detr"
+# Input
 COCO_ANNOTATION_FILE = PROJECT_ROOT / "data/processed/annotations/test.json"
 
 # Output directory
@@ -59,14 +57,6 @@ SKELETON_CONNECTIONS = [
 
 
 # ==================== HELPER FUNCTIONS ====================
-def _list_image_paths(directory: Path) -> List[Path]:
-    """List all image files in directory, sorted."""
-    exts = {".jpg", ".jpeg", ".png", ".bmp"}
-    files = [p for p in directory.iterdir() if p.suffix.lower() in exts]
-    files.sort()
-    return files
-
-
 def _find_next_output_number(output_dir: Path, suffix: str = "") -> int:
     """Find the next available output number."""
     pattern = f"output_*{suffix}.mp4"
@@ -86,25 +76,19 @@ def _find_next_output_number(output_dir: Path, suffix: str = "") -> int:
     return max(numbers) + 1 if numbers else 1
 
 
-def _load_annotation(annotation_path: Path) -> Dict:
-    """Load annotation JSON file."""
-    if not annotation_path.exists():
-        return {'detections': []}
-    
-    with open(annotation_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-
 def _load_coco_annotations(coco_path: Path) -> Dict[str, List[Dict]]:
-    """Load COCO format annotations and index by filename."""
+    """Load COCO format annotations and index by filename (basename)."""
     if not coco_path.exists():
         raise FileNotFoundError(f"COCO annotation file not found: {coco_path}")
     
     with open(coco_path, 'r', encoding='utf-8') as f:
         coco_data = json.load(f)
     
-    # Create image_id to filename mapping
-    image_map = {img['id']: img['file_name'] for img in coco_data.get('images', [])}
+    # Create image_id to filename mapping (use basename for matching)
+    image_map = {
+        img['id']: os.path.basename(img['file_name']) 
+        for img in coco_data.get('images', [])
+    }
     
     # Group annotations by filename
     annotations_by_file = {}
@@ -120,49 +104,22 @@ def _load_coco_annotations(coco_path: Path) -> Dict[str, List[Dict]]:
     return annotations_by_file
 
 
-def _draw_detection(frame: np.ndarray, detection: Dict) -> np.ndarray:
-    """Draw a single detection on the frame (RF-DETR format)."""
-    bbox = detection['bbox_xyxy']
-    x1, y1, x2, y2 = map(int, bbox)
+def _get_image_paths_from_coco(coco_path: Path) -> List[Path]:
+    """Extract image paths from COCO annotations (handles absolute paths)."""
+    with open(coco_path, 'r', encoding='utf-8') as f:
+        coco_data = json.load(f)
     
-    class_name = detection.get('class_name', 'unknown')
-    confidence = detection.get('confidence', 0.0)
-    track_id = detection.get('track_id', '?')
+    image_paths = []
+    for img in coco_data.get('images', []):
+        img_path = Path(img['file_name'])
+        
+        # Check if path exists (handles both absolute and relative)
+        if img_path.exists():
+            image_paths.append(img_path)
+        else:
+            print(f"⚠️ Image not found: {img_path}")
     
-    color = COLORS.get(class_name, COLORS['unknown'])
-    
-    # Draw bounding box
-    cv2.rectangle(frame, (x1, y1), (x2, y2), color, BOX_THICKNESS)
-    
-    # Prepare label
-    label = f"ID:{track_id} {class_name} {confidence:.2f}"
-    
-    (text_width, text_height), baseline = cv2.getTextSize(
-        label, FONT, FONT_SCALE, FONT_THICKNESS
-    )
-    
-    # Draw background for text
-    cv2.rectangle(
-        frame,
-        (x1, y1 - text_height - baseline - 5),
-        (x1 + text_width, y1),
-        color,
-        -1
-    )
-    
-    # Draw text
-    cv2.putText(
-        frame,
-        label,
-        (x1, y1 - baseline - 5),
-        FONT,
-        FONT_SCALE,
-        TEXT_COLOR,
-        FONT_THICKNESS,
-        cv2.LINE_AA
-    )
-    
-    return frame
+    return sorted(image_paths, key=lambda p: p.name)
 
 
 def _draw_keypoints(frame: np.ndarray, annotation: Dict) -> np.ndarray:
@@ -253,59 +210,52 @@ def _draw_keypoints(frame: np.ndarray, annotation: Dict) -> np.ndarray:
     return frame
 
 
-def _get_user_choice() -> str:
-    """Prompt user to select annotation format."""
-    print("\nSelect annotation format to visualize:")
-    print("1. RF-DETR detections (from rf-detr directory)")
-    print("2. COCO keypoints (from test.json)")
-    
-    while True:
-        choice = input("\nEnter your choice (1 or 2): ").strip()
-        if choice == '1':
-            return 'rf-detr'
-        elif choice == '2':
-            return 'coco'
-        else:
-            print("Invalid choice. Please enter 1 or 2.")
-
-
 # ==================== MAIN VISUALIZATION ====================
 def main():
     print("=" * 60)
-    print("DETECTION & KEYPOINT VISUALIZATION SCRIPT")
+    print("YOLO KEYPOINT VISUALIZATION")
     print("=" * 60)
     
-    # Get user choice
-    annotation_type = _get_user_choice()
+    # Ask user for annotation file
+    print(f"\nDefault annotation file: {COCO_ANNOTATION_FILE.name}")
+    user_input = input("Enter annotation filename (or press Enter for default): ").strip()
     
-    # Verify input directories
-    if not TEST_FRAMES_DIR.exists():
-        raise FileNotFoundError(f"Test frames directory not found: {TEST_FRAMES_DIR}")
+    if user_input:
+        annotation_path = PROJECT_ROOT / "data" / "processed" / "annotations" / user_input
+        if not annotation_path.exists():
+            # Try without adding path
+            annotation_path = Path(user_input)
+            if not annotation_path.exists():
+                print(f"❌ File not found: {user_input}")
+                return
+    else:
+        annotation_path = COCO_ANNOTATION_FILE
+    
+    if not annotation_path.exists():
+        print(f"❌ Annotation file not found: {annotation_path}")
+        return
+    
+    print(f"📄 Using annotations: {annotation_path}")
+    
+    # Load annotations
+    print("Loading annotations...")
+    coco_annotations = _load_coco_annotations(annotation_path)
+    
+    # Get image paths from annotations
+    print("Extracting image paths from annotations...")
+    frame_paths = _get_image_paths_from_coco(annotation_path)
+    
+    if not frame_paths:
+        print("❌ No valid image paths found in annotations")
+        return
+    
+    print(f"Found {len(frame_paths)} frames")
     
     # Create output directory
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     
-    # Get all test frames
-    frame_paths = _list_image_paths(TEST_FRAMES_DIR)
-    if not frame_paths:
-        raise ValueError(f"No images found in {TEST_FRAMES_DIR}")
-    
-    print(f"\nFound {len(frame_paths)} frames")
-    print(f"Input frames: {TEST_FRAMES_DIR}")
-    
-    # Load annotations based on type
-    coco_annotations = None
-    if annotation_type == 'rf-detr':
-        if not ANNOTATIONS_DIR.exists():
-            raise FileNotFoundError(f"Annotations directory not found: {ANNOTATIONS_DIR}")
-        print(f"Annotations: {ANNOTATIONS_DIR}")
-        output_suffix = ""
-    else:  # coco
-        print(f"Annotations: {COCO_ANNOTATION_FILE}")
-        coco_annotations = _load_coco_annotations(COCO_ANNOTATION_FILE)
-        output_suffix = "_yolo"
-    
     # Determine output video path
+    output_suffix = f"_{annotation_path.stem}"
     output_number = _find_next_output_number(OUTPUTS_DIR, output_suffix)
     output_path = OUTPUTS_DIR / f"output_{output_number}{output_suffix}.mp4"
     print(f"Output video: {output_path}")
@@ -313,7 +263,8 @@ def main():
     # Initialize video writer
     first_frame = cv2.imread(str(frame_paths[0]))
     if first_frame is None:
-        raise ValueError(f"Could not read first frame: {frame_paths[0]}")
+        print(f"❌ Could not read first frame: {frame_paths[0]}")
+        return
     
     height, width = first_frame.shape[:2]
     fourcc = cv2.VideoWriter_fourcc(*CODEC)
@@ -325,7 +276,8 @@ def main():
     )
     
     if not video_writer.isOpened():
-        raise RuntimeError("Failed to initialize video writer")
+        print("❌ Failed to initialize video writer")
+        return
     
     print(f"\nProcessing frames...")
     print(f"Video resolution: {width}x{height}")
@@ -341,36 +293,24 @@ def main():
         # Read frame
         frame = cv2.imread(str(frame_path))
         if frame is None:
-            print(f"Warning: Could not read frame: {frame_path}")
+            print(f"⚠️ Could not read frame: {frame_path}")
             continue
         
-        if annotation_type == 'rf-detr':
-            # Find corresponding annotation file
-            annotation_path = ANNOTATIONS_DIR / f"{frame_path.stem}.json"
-            annotation_data = _load_annotation(annotation_path)
-            
-            # Draw all detections
-            detections = annotation_data.get('detections', [])
-            if detections:
-                frames_with_annotations += 1
-                for detection in detections:
-                    frame = _draw_detection(frame, detection)
-            else:
-                frames_without_annotations += 1
-        else:  # coco
-            # Find annotations for this frame
-            frame_annotations = coco_annotations.get(frame_path.stem, [])
-            if frame_annotations:
-                frames_with_annotations += 1
-                for annotation in frame_annotations:
-                    frame = _draw_keypoints(frame, annotation)
-                    # Count by category
-                    if annotation['category_id'] == 1:
-                        red_count += 1
-                    elif annotation['category_id'] == 2:
-                        blue_count += 1
-            else:
-                frames_without_annotations += 1
+        # Find annotations for this frame (match by stem)
+        frame_stem = frame_path.stem
+        frame_annotations = coco_annotations.get(frame_stem, [])
+        
+        if frame_annotations:
+            frames_with_annotations += 1
+            for annotation in frame_annotations:
+                frame = _draw_keypoints(frame, annotation)
+                # Count by category
+                if annotation['category_id'] == 1:
+                    red_count += 1
+                elif annotation['category_id'] == 2:
+                    blue_count += 1
+        else:
+            frames_without_annotations += 1
         
         # Write frame to video
         video_writer.write(frame)
@@ -386,17 +326,13 @@ def main():
     print("\n" + "=" * 60)
     print("✅ VISUALIZATION COMPLETE")
     print("=" * 60)
-    print(f"Annotation type: {annotation_type.upper()}")
     print(f"Total frames processed: {len(frame_paths)}")
     print(f"Frames with annotations: {frames_with_annotations}")
     print(f"Frames without annotations: {frames_without_annotations}")
-    
-    if annotation_type == 'coco':
-        print(f"\nDetection breakdown:")
-        print(f"  Boxer RED: {red_count}")
-        print(f"  Boxer BLUE: {blue_count}")
-        print(f"  Total: {red_count + blue_count}")
-    
+    print(f"\nDetection breakdown:")
+    print(f"  Boxer RED: {red_count}")
+    print(f"  Boxer BLUE: {blue_count}")
+    print(f"  Total: {red_count + blue_count}")
     print(f"\nOutput saved to: {output_path}")
     print(f"Video size: {os.path.getsize(output_path) / (1024*1024):.2f} MB")
     print("=" * 60)
@@ -407,4 +343,5 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         print(f"\n❌ Error: {e}")
-        raise
+        import traceback
+        traceback.print_exc()

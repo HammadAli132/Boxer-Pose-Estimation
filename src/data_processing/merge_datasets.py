@@ -1,22 +1,14 @@
 #!/usr/bin/env python3
 """
-merge_datasets.py
+merge_datasets.py (Memory Optimized)
 
 Provides two options for merging datasets:
 1. Merge frames from existing videos in /data/raw/frames
-2. Merge frames from test directory in /data/processed/test
+2. Merge frames from test annotations (reads full paths from test.json)
 
-For option 1:
-- Lists available video directories
-- User selects which directories to use
-- User specifies how many frames from each directory
-- Copies frames and merges annotations
-
-For option 2:
-- Copies frames from processed/test
-- Merges annotations from processed/annotations/test.json
-
-Both options merge into /data/main_dataset
+Both options:
+- Copy images to /data/main_dataset/frames
+- Merge annotations into /data/main_dataset/annotations.json
 """
 
 import json
@@ -31,7 +23,6 @@ RAW_FRAMES = DATA_RAW / "frames"
 RAW_ANNOTATIONS = DATA_RAW / "annotations"
 
 DATA_PROCESSED = PROJECT / "data" / "processed"
-PROCESSED_TEST = DATA_PROCESSED / "images" / "test"
 PROCESSED_TEST_ANN = DATA_PROCESSED / "annotations" / "test.json"
 
 MAIN_DATA = PROJECT / "data" / "main_dataset"
@@ -109,7 +100,7 @@ def merge_from_video_directories():
         print(f"  {i}. {vdir} ({count} frames)")
     
     # Get user selection
-    selection = input("\n📝 Enter directory numbers to merge (space-separated, e.g., '1 2 3'): ").strip()
+    selection = input("\n🔍 Enter directory numbers to merge (space-separated, e.g., '1 2 3'): ").strip()
     try:
         selected_indices = [int(x) for x in selection.split()]
         selected_dirs = [dir_info[i] for i in selected_indices if i in dir_info]
@@ -154,7 +145,7 @@ def merge_from_video_directories():
     
     # Process each selected directory
     for dir_name, num_frames in frame_selections.items():
-        print(f"\n🔄 Processing {dir_name}...")
+        print(f"\n📄 Processing {dir_name}...")
         
         # Load annotations for this directory
         ann_file = RAW_ANNOTATIONS / dir_name / "annotations.json"
@@ -189,7 +180,7 @@ def merge_from_video_directories():
                 print(f"ℹ️ Frame already exists: {fname}, skipping...")
                 continue
             
-            # Copy frame
+            # Copy frame to main_dataset
             dst_path = MAIN_FRAMES / fname
             try:
                 MAIN_FRAMES.mkdir(parents=True, exist_ok=True)
@@ -205,7 +196,7 @@ def merge_from_video_directories():
                 "id": max_img_id,
                 "width": img.get("width", 0),
                 "height": img.get("height", 0),
-                "file_name": fname,
+                "file_name": fname,  # Store just filename (image is in main_dataset/frames)
                 "license": img.get("license", 0),
                 "flickr_url": img.get("flickr_url", ""),
                 "coco_url": img.get("coco_url", ""),
@@ -233,14 +224,11 @@ def merge_from_video_directories():
     save_json(MAIN_ANN, main_obj)
     print(f"\n✅ Done! Added {total_images_added} images and {total_anns_added} annotations")
     print(f"📄 Annotations saved to: {MAIN_ANN}")
+    print(f"📁 Images saved to: {MAIN_FRAMES}")
 
 
-def merge_from_test_directory():
-    """Option 2: Merge frames from processed test directory."""
-    if not PROCESSED_TEST.exists():
-        print("❌ Test directory not found at /data/processed/images/test")
-        return
-    
+def merge_from_test_annotations():
+    """Option 2: Merge frames from test annotations (using full paths from test.json)."""
     if not PROCESSED_TEST_ANN.exists():
         print("❌ Test annotations not found at /data/processed/annotations/test.json")
         return
@@ -349,7 +337,7 @@ def merge_from_test_directory():
         13: 7    # right_ankle -> right_ankle (position 7 in target)
     }
     
-    print("\n🔄 Step 1: Converting keypoint order...")
+    print("\n📄 Step 1: Converting keypoint order...")
     
     # Convert all annotations
     category_id_changes_16_to_1 = 0
@@ -398,7 +386,7 @@ def merge_from_test_directory():
     print(f"✅ Changed category_id from 1 to 2 for {category_id_changes_1_to_2} annotations")
     
     # Step 3: Replace categories with predefined structure
-    print(f"\n🔄 Step 2: Replacing categories with target structure...")
+    print(f"\n📄 Step 2: Replacing categories with target structure...")
     test_ann['categories'] = TARGET_CATEGORIES
     
     print(f"✅ Replaced categories:")
@@ -421,13 +409,14 @@ def merge_from_test_directory():
     images_added = 0
     anns_added = 0
     
-    # Copy frames and add image entries
+    # Copy frames from their original locations (full paths in file_name)
     for img in tqdm(test_images, desc="Copying test frames"):
-        fname = img["file_name"]
-        src_path = PROCESSED_TEST / fname
+        # file_name now contains the full path to the original image
+        full_path = Path(img["file_name"])
+        fname = full_path.name  # Extract just the filename
         
-        if not src_path.exists():
-            print(f"⚠️ Test frame not found: {fname}, skipping...")
+        if not full_path.exists():
+            print(f"⚠️ Test frame not found: {full_path}, skipping...")
             continue
         
         # Skip if already exists
@@ -439,11 +428,11 @@ def merge_from_test_directory():
                     break
             continue
         
-        # Copy frame
+        # Copy frame to main_dataset
         dst_path = MAIN_FRAMES / fname
         try:
             MAIN_FRAMES.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_path, dst_path)
+            shutil.copy2(full_path, dst_path)
         except Exception as e:
             print(f"⚠️ Failed to copy {fname}: {e}")
             continue
@@ -455,7 +444,7 @@ def merge_from_test_directory():
             "id": max_img_id,
             "width": img.get("width", 0),
             "height": img.get("height", 0),
-            "file_name": fname,
+            "file_name": fname,  # Store just filename (image is in main_dataset/frames)
             "license": img.get("license", 0),
             "flickr_url": img.get("flickr_url", ""),
             "coco_url": img.get("coco_url", ""),
@@ -483,23 +472,25 @@ def merge_from_test_directory():
     save_json(MAIN_ANN, main_obj)
     print(f"\n✅ Done! Added {images_added} images and {anns_added} annotations")
     print(f"📄 Annotations saved to: {MAIN_ANN}")
+    print(f"📁 Images saved to: {MAIN_FRAMES}")
 
 
 def main():
     """Main function to handle user choice and execute merge."""
     print("=" * 60)
-    print("Dataset Merge Tool")
+    print("Dataset Merge Tool (Memory Optimized)")
     print("=" * 60)
+    print("\n💡 Note: Images will be copied to /data/main_dataset/frames")
     print("\nChoose merge option:")
     print("1) Merge frames from existing videos (/data/raw/frames)")
-    print("2) Merge frames from test directory (/data/processed/test)")
+    print("2) Merge frames from test annotations (/data/processed/annotations/test.json)")
     
     choice = input("\nEnter 1 or 2: ").strip()
     
     if choice == "1":
         merge_from_video_directories()
     elif choice == "2":
-        merge_from_test_directory()
+        merge_from_test_annotations()
     else:
         print("❌ Invalid choice. Please enter 1 or 2.")
 

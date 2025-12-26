@@ -1,10 +1,12 @@
 """
-src/pipelines/yolo_pipeline.py
+src/pipelines/yolo_pipeline.py (Memory Optimized with Symlinks)
 
 Enhanced YOLO Pose training script:
-- Prompts user to recreate labels (COCO → YOLO) each run.
-- Saves model weights to /models/{model_name}/ (best.pt, last.pt).
-- Saves training results (graphs, metrics, etc.) to /runs/run_{n}/.
+- Creates symlinks in /data/processed/images/{split} pointing to original images
+- Creates labels in /data/processed/labels/{split}
+- This satisfies YOLO's expected directory structure without duplicating images
+- Saves model weights to /models/{model_name}/ (best.pt, last.pt)
+- Saves training results (graphs, metrics, etc.) to /runs/{model_name}/run_{n}/
 """
 
 import os
@@ -18,13 +20,8 @@ from pathlib import Path
 import requests
 from ultralytics import YOLO
 import yaml
-from ultralytics.engine.results import Results
-from torchvision import transforms as T
-from PIL import Image
 import json
 import numpy as np
-from tkinter import Tk, filedialog
-import cv2
 
 # Import your converter
 from ..utils.coco_to_yolo_pose import coco_to_yolo_keypoints
@@ -36,14 +33,15 @@ from ..utils.results_to_coco import save_results_as_coco
 THIS_FILE = Path(__file__).resolve()
 PROJECT_ROOT = THIS_FILE.parents[2]
 DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
-IMAGES_DIR = DATA_PROCESSED / "images"
 ANNOTS_DIR = DATA_PROCESSED / "annotations"
-LABELS_DIR = DATA_PROCESSED / "labels"
+
+# Virtual directories for YOLO (symlinks + labels)
+IMAGES_DIR = DATA_PROCESSED / "images"  # Symlinks to original images
+LABELS_DIR = DATA_PROCESSED / "labels"  # Real label files
+
 MODELS_ROOT = PROJECT_ROOT / "models"
-IMAGES_TEST = DATA_PROCESSED / "images" / "test"
 OUT_TEST_JSON = ANNOTS_DIR / "test.json"
-RFDETR_ANNOTS_DIR = DATA_PROCESSED / "annotations/rf-detr"
-RUNS_ROOT = PROJECT_ROOT / "runs"  # <-- NEW: store training results here
+RUNS_ROOT = PROJECT_ROOT / "runs"
 
 # -----------------------
 # Defaults
@@ -110,12 +108,111 @@ def ensure_pretrained(model_name: str) -> Path:
     return local_file
 
 
+def prepare_virtual_dataset(split: str, json_path: Path):
+    """
+    Creates virtual dataset structure for YOLO:
+    1. Reads the JSON for the split (train/val)
+    2. Creates directories: data/processed/images/{split} & labels/{split}
+    3. Creates symlinks in images/{split} pointing to original image locations
+    4. Generates YOLO .txt labels in labels/{split}
+    
+    This structure allows YOLO to find both images and labels without duplicating image files.
+    """
+    if not json_path.exists():
+        raise FileNotFoundError(f"Annotation file not found: {json_path}")
+
+    # Define target directories
+    img_split_dir = IMAGES_DIR / split
+    lbl_split_dir = LABELS_DIR / split
+    
+    # Cleanup and recreate
+    if img_split_dir.exists():
+        shutil.rmtree(img_split_dir)
+    if lbl_split_dir.exists():
+        shutil.rmtree(lbl_split_dir)
+    img_split_dir.mkdir(parents=True, exist_ok=True)
+    lbl_split_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n🏗️  Preparing Virtual Dataset for '{split}'...")
+    print(f"   Images (Symlinks): {img_split_dir}")
+    print(f"   Labels (Real):     {lbl_split_dir}")
+
+    # Load JSON
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+
+    # 1. Create Symlinks to original images
+    symlinks_created = 0
+    symlinks_failed = 0
+    
+    for img in data.get('images', []):
+        original_path = Path(img['file_name'])
+        
+        if not original_path.exists():
+            print(f"⚠️ Warning: Original image missing: {original_path}")
+            continue
+            
+        # Create symlink path: processed/images/train/image123.jpg
+        symlink_path = img_split_dir / original_path.name
+        
+        try:
+            # Remove if exists (cleanup)
+            if symlink_path.exists() or symlink_path.is_symlink():
+                symlink_path.unlink()
+            
+            # Create symlink
+            os.symlink(original_path, symlink_path)
+            symlinks_created += 1
+            
+        except OSError as e:
+            print(f"❌ Failed to create symlink for {original_path.name}: {e}")
+            print(f"   Note: On Windows, you may need to run as Administrator or enable Developer Mode")
+            symlinks_failed += 1
+            
+            if symlinks_failed >= 5:
+                print("\n❌ Too many symlink failures. Please:")
+                print("   1. Run as Administrator, OR")
+                print("   2. Enable Windows Developer Mode:")
+                print("      Settings > Update & Security > For Developers > Developer Mode: ON")
+                raise RuntimeError("Cannot create symlinks. See suggestions above.")
+
+    if symlinks_created == 0:
+        raise RuntimeError(f"No symlinks created for {split} split. Check image paths in {json_path}")
+    
+    print(f"✅ Created {symlinks_created} symlinks")
+
+    # 2. Generate YOLO Labels
+    # Pass the symlink directory as images_dir since that's where YOLO will look
+    print(f"📝 Converting annotations to YOLO format...")
+    coco_to_yolo_keypoints(
+        str(json_path),
+        str(img_split_dir),  # Directory where images 'appear' to be (symlinks)
+        str(lbl_split_dir),  # Directory where labels should be saved
+        num_keypoints=NUM_KEYPOINTS,
+        clear_out=False  # We already cleared it
+    )
+
+    print(f"✅ Virtual dataset prepared for '{split}'")
+    return img_split_dir
+
+
 def dataset_yaml_path_for(model_name: str) -> Path:
+    """
+    Create dataset YAML for YOLO training.
+    Points to the virtual dataset structure with symlinks.
+    """
+    train_json = ANNOTS_DIR / "train.json"
+    val_json = ANNOTS_DIR / "val.json"
+    
+    # Prepare virtual datasets (Symlinks + Labels)
+    train_img_dir = prepare_virtual_dataset("train", train_json)
+    val_img_dir = prepare_virtual_dataset("val", val_json)
+    
     yaml_path = PROJECT_ROOT / f"{model_name}_dataset.yaml"
     content = {
-        "path": str(DATA_PROCESSED),
-        "train": str(IMAGES_DIR / "train"),
-        "val": str(IMAGES_DIR / "val"),
+        "path": str(DATA_PROCESSED),  # Base path
+        "train": "images/train",      # Relative to path
+        "val": "images/val",          # Relative to path
         "kpt_shape": [NUM_KEYPOINTS, 3],
         "names": ["boxer_red", "boxer_blue"],
         "keypoints": KEYPOINTS,
@@ -123,21 +220,19 @@ def dataset_yaml_path_for(model_name: str) -> Path:
     }
     with open(yaml_path, "w") as f:
         yaml.dump(content, f)
+    
+    print(f"📝 Created dataset YAML: {yaml_path}")
+    print(f"   Path: {DATA_PROCESSED}")
+    print(f"   Train: images/train (with {len(list(train_img_dir.glob('*')))} symlinks)")
+    print(f"   Val: images/val (with {len(list(val_img_dir.glob('*')))} symlinks)")
+    
     return yaml_path
 
 
 def labels_exist(split: str) -> bool:
+    """Check if YOLO labels exist for a split."""
     dirp = LABELS_DIR / split
     return dirp.exists() and any(dirp.glob("*.txt"))
-
-
-def ensure_labels_from_coco(split: str, coco_json: Path, images_dir: Path, out_labels_dir: Path, num_kpts: int):
-    if out_labels_dir.exists():
-        shutil.rmtree(out_labels_dir)
-    out_labels_dir.mkdir(parents=True, exist_ok=True)
-    print(f"🔁 Converting {coco_json} -> {out_labels_dir} ...")
-    coco_to_yolo_keypoints(str(coco_json), str(images_dir), str(out_labels_dir), num_keypoints=num_kpts)
-    print("✅ Conversion done.")
 
 
 def ask_yes_no(prompt: str) -> bool:
@@ -173,30 +268,29 @@ def run_yolo_training(
     if not train_json.exists() or not val_json.exists():
         raise FileNotFoundError("Train/Val JSONs not found.")
 
-    # Ask if user wants to recreate labels
-    recreate_labels = ask_yes_no("Do you want to recreate YOLO labels from COCO annotations?")
-    if recreate_labels or not (labels_exist("train") and labels_exist("val")):
-        ensure_labels_from_coco("train", train_json, IMAGES_DIR / "train", LABELS_DIR / "train", NUM_KEYPOINTS)
-        ensure_labels_from_coco("val", val_json, IMAGES_DIR / "val", LABELS_DIR / "val", NUM_KEYPOINTS)
-    else:
-        print("✅ Using existing YOLO labels.")
-
-    # Check again
-    if not (labels_exist("train") and labels_exist("val")):
-        print("❌ ERROR: Labels missing even after conversion.")
-        return False
-
-    # Prepare weights & dataset yaml
-    local_weights = ensure_pretrained(model_name)
+    # Always recreate virtual dataset (symlinks + labels)
+    # This ensures consistency if source images or annotations changed
+    print("\n" + "=" * 60)
+    print("Preparing Virtual Dataset Structure")
+    print("=" * 60)
+    
     data_yaml = dataset_yaml_path_for(model_name)
+    
+    print("\n✅ Virtual dataset structure ready")
+    print("   - Symlinks point to original image locations")
+    print("   - Labels generated in standard YOLO format")
+    print("   - No image duplication!")
+
+    # Prepare weights & checkpoint
+    local_weights = ensure_pretrained(model_name)
     checkpoint_target = model_dir / "best.pt"
 
     if resume_from_best and checkpoint_target.exists():
-        print(f"🔁 Resuming from checkpoint: {checkpoint_target}")
+        print(f"\n🔄 Resuming from checkpoint: {checkpoint_target}")
         weights_to_load = str(checkpoint_target)
     else:
         weights_to_load = str(local_weights)
-        print(f"📦 Using pretrained weights: {weights_to_load}")
+        print(f"\n📦 Using pretrained weights: {weights_to_load}")
 
     # Create YOLO model
     os.chdir(PROJECT_ROOT)
@@ -208,7 +302,7 @@ def run_yolo_training(
         run_number += 1
     current_run_dir = RUNS_ROOT / model_name / f"run_{run_number}"
     current_run_dir.mkdir(parents=True)
-    print(f"🧾 Logging this training to: {current_run_dir}")
+    print(f"🗂️ Logging this training to: {current_run_dir}")
 
     # Training retries
     attempt = 0
@@ -226,15 +320,18 @@ def run_yolo_training(
                 imgsz=imgsz,
                 batch=current_batch,
                 workers=current_workers,
-                project=str(current_run_dir),  # now goes to /runs/model_name/run_{n}
+                project=str(current_run_dir),
                 name="",  # avoid subfolder (no /exp)
                 exist_ok=True,
                 device=0 if torch.cuda.is_available() else "cpu"
             )
-                # --- Print validation summary ---
+            
+            # Print validation summary
             if isinstance(results, dict):
                 print("\n📊 Validation summary:")
                 print(results)
+            
+            break  # Success!
             
         except Exception as e:
             tb = traceback.format_exc()
@@ -252,16 +349,16 @@ def run_yolo_training(
                 print(tb)
                 raise
 
-    # --- Copy best and last weights ---
-    exp_weights_dir = current_run_dir / "train" / "weights"  # <-- updated path
+    # Copy best and last weights
+    exp_weights_dir = current_run_dir / "train" / "weights"
     best_src = exp_weights_dir / "best.pt"
     last_src = exp_weights_dir / "last.pt"
 
     if best_src.exists():
         shutil.copy2(best_src, model_dir / "best.pt")
-        print(f"✅ Copied best.pt -> {model_dir / 'best.pt'}")
+        print(f"\n✅ Copied best.pt -> {model_dir / 'best.pt'}")
     else:
-        print("⚠️ best.pt not found in run folder.")
+        print("\n⚠️ best.pt not found in run folder.")
 
     if last_src.exists():
         shutil.copy2(last_src, model_dir / "last.pt")
@@ -269,35 +366,65 @@ def run_yolo_training(
     else:
         print("⚠️ last.pt not found in run folder.")
 
-    # --- Keep only last 5 runs ---
-    runs = sorted(
-        [p for p in RUNS_ROOT.glob("run_*") if p.is_dir()],
-        key=lambda x: x.stat().st_mtime
-    )
-    if len(runs) > 5:
-        old_runs = runs[:-5]
-        for r in old_runs:
-            try:
-                shutil.rmtree(r)
-                print(f"🧹 Deleted old run directory: {r}")
-            except Exception as e:
-                print(f"⚠️ Failed to delete {r}: {e}")
-
+    # Keep only last 5 runs
+    model_runs_dir = RUNS_ROOT / model_name
+    if model_runs_dir.exists():
+        runs = sorted(
+            [p for p in model_runs_dir.glob("run_*") if p.is_dir()],
+            key=lambda x: x.stat().st_mtime
+        )
+        if len(runs) > 5:
+            old_runs = runs[:-5]
+            for r in old_runs:
+                try:
+                    shutil.rmtree(r)
+                    print(f"🧹 Deleted old run directory: {r}")
+                except Exception as e:
+                    print(f"⚠️ Failed to delete {r}: {e}")
 
     print(f"\n🎉 Training finished. Results saved in: {current_run_dir}")
     return True
+
+
+def get_test_images_from_annotations() -> list:
+    """
+    Get test image paths from test.json annotations.
+    Returns list of Path objects.
+    """
+    if not OUT_TEST_JSON.exists():
+        print(f"⚠️ Test annotations not found at: {OUT_TEST_JSON}")
+        return []
+    
+    with open(OUT_TEST_JSON, 'r') as f:
+        data = json.load(f)
+    
+    images = data.get('images', [])
+    if not images:
+        print("⚠️ No images found in test annotations")
+        return []
+    
+    # Extract paths from annotations
+    image_paths = []
+    for img in images:
+        img_path = Path(img['file_name'])
+        if img_path.exists():
+            image_paths.append(img_path)
+        else:
+            print(f"⚠️ Image not found: {img_path}")
+    
+    return sorted(image_paths)
+
 
 def run_yolo_inference(
     model_name: str, 
     device: str = "0",
     conf: float = 0.2,
-    **kwargs # Accept other args
+    **kwargs  # Accept other args
 ) -> bool:
     """
     Runs YOLO inference on test images and saves results as COCO JSON.
-    (Content is copied directly from original inference.py:run_inference)
+    Reads test image paths from annotations.
     """
-
     print(f"\n--- YOLOv8 Inference Pipeline ({model_name}) ---")
     model_path = MODELS_ROOT / model_name / "best.pt"
     if not model_path.exists():
@@ -307,15 +434,12 @@ def run_yolo_inference(
     print(f"Loading YOLO model from: {model_path}")
     model = YOLO(str(model_path))
 
-    # Collect test images (sorted for consistency)
-    image_paths = sorted([
-        p for p in IMAGES_TEST.glob("*") 
-        if p.suffix.lower() in [".jpg", ".jpeg", ".png"]
-    ])
+    # Get test images from annotations
+    image_paths = get_test_images_from_annotations()
     
     if not image_paths:
-        print(f"No test images found at: {IMAGES_TEST}")
-        return True # Not an error if no test images
+        print(f"⚠️ No test images found")
+        return True  # Not an error if no test images
 
     print(f"Found {len(image_paths)} test images")
     print(f"Running inference with confidence threshold: {conf}")
@@ -331,23 +455,24 @@ def run_yolo_inference(
         half=True
     )
 
-    # Add this debug code after model.predict():
-    for i, result in enumerate(results[:1]):  # Check first result
-        print(f"\n=== Debug Result {i} ===")
-        print(f"Has boxes: {hasattr(result, 'boxes')}")
-        if hasattr(result, 'boxes') and result.boxes is not None:
-            print(f"Boxes shape: {result.boxes.xyxy.shape}")
-            print(f"Has cls: {hasattr(result.boxes, 'cls')}")
-            if hasattr(result.boxes, 'cls'):
-                print(f"Classes: {result.boxes.cls}")
-                print(f"Class names: {result.names}")
+    # Debug first result
+    results_list = list(results)
+    if results_list:
+        for i, result in enumerate(results_list[:1]):
+            print(f"\n=== Debug Result {i} ===")
+            print(f"Has boxes: {hasattr(result, 'boxes')}")
+            if hasattr(result, 'boxes') and result.boxes is not None:
+                print(f"Boxes shape: {result.boxes.xyxy.shape}")
+                print(f"Has cls: {hasattr(result.boxes, 'cls')}")
+                if hasattr(result.boxes, 'cls'):
+                    print(f"Classes: {result.boxes.cls}")
+                    print(f"Class names: {result.names}")
 
-    results = list(results)
     print(f"\nConverting YOLO results to COCO format...")
     
     # Convert results to COCO format and save
     save_results_as_coco(
-        results=results,
+        results=results_list,
         image_paths=image_paths,
         out_json=OUT_TEST_JSON,
         overwrite=True
@@ -355,5 +480,3 @@ def run_yolo_inference(
 
     print(f"✅ YOLO Inference complete! COCO annotations saved to: {OUT_TEST_JSON}")
     return True
-
-# =========================================================================================================================================

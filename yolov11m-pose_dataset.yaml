@@ -51,5 +51,5 @@ skeleton:
   - 9
 - - 3
   - 5
-train: /home/cooper/Desktop/My Personal/Repositories/Boxer-Pose-Estimation/data/processed/images/train
-val: /home/cooper/Desktop/My Personal/Repositories/Boxer-Pose-Estimation/data/processed/images/val
+train: images/train
+val: images/val

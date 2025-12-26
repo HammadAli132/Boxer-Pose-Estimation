@@ -6,6 +6,7 @@ __pycache__/
 # custom ignore
 folder_structure_capturer.py
 folder_structure.txt
+cleaner.py
 
 # Ignore top-level directories
 /data/

@@ -59,7 +59,8 @@ def coco_to_yolo_keypoints(
             tqdm.write(f"⚠️ Warning: image_id {img_id} not found in images[]. Skipping annotation id {ann.get('id')}")
             continue
 
-        img_name = img_info.get("file_name")
+        raw_filename = img_info.get("file_name")
+        img_name = os.path.basename(raw_filename)
         img_w = img_info.get("width")
         img_h = img_info.get("height")
 
@@ -69,7 +70,10 @@ def coco_to_yolo_keypoints(
             continue
 
         # check image existence (warning only)
-        img_path = os.path.join(images_dir, img_name)
+        if os.path.isabs(raw_filename):
+            img_path = raw_filename  # Use full path from JSON
+        else:
+            img_path = os.path.join(images_dir, raw_filename)
         if not os.path.exists(img_path):
             images_missing.add(img_name)
             tqdm.write(f"⚠️ Image file not found: {img_path} (label will still be created)")
@@ -110,7 +114,7 @@ def coco_to_yolo_keypoints(
         line = f"{class_idx} {cx:.6f} {cy:.6f} {nw:.6f} {nh:.6f} " + " ".join(kp_parts)
 
         # label file path
-        label_name = os.path.splitext(img_name)[0] + ".txt"
+        label_name = os.path.splitext(os.path.basename(raw_filename))[0] + ".txt"
         label_path = os.path.join(out_dir, label_name)
 
         # append (multiple instances per image ok)

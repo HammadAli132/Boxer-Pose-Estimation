@@ -144,7 +144,7 @@ def save_results_as_coco(
         
         images_info.append({
             "id": img_id,
-            "file_name": img_path.name,
+            "file_name": str(img_path),
             "height": int(h),
             "width": int(w),
             "license": 1,

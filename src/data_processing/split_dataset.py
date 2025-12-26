@@ -1,6 +1,5 @@
 import os
 import json
-import shutil
 from pathlib import Path
 from tqdm import tqdm
 
@@ -11,7 +10,6 @@ RAW_ANNOTATIONS_DIR = PROJECT / "data" / "raw" / "annotations"
 MAIN_DATA = PROJECT / "data" / "main_dataset"
 MAIN_FRAMES = MAIN_DATA / "frames"
 MAIN_ANN = MAIN_DATA / "annotations.json"
-PROCESSED_IMAGES_DIR = PROJECT / "data" / "processed" / "images"
 PROCESSED_ANNOTATIONS_DIR = PROJECT / "data" / "processed" / "annotations"
 
 VIDEO_EXTS = (".mp4", ".avi", ".mov", ".mkv", ".MP4", ".AVI", ".MOV", ".MKV")
@@ -49,7 +47,7 @@ def load_main_annotations():
 
 def find_frame_path(file_name, hinted_video=None):
     """
-    Try to locate the frame file:
+    Try to locate the frame file and return its full path:
       1) data/raw/frames/{hinted_video}/{file_name}
       2) infer video from filename prefix {prefix}_frame_...
       3) fallback: walk data/raw/frames and find the file
@@ -59,44 +57,35 @@ def find_frame_path(file_name, hinted_video=None):
     if hinted_video:
         p = RAW_FRAMES_DIR / hinted_video / file_name
         if p.exists():
-            return p
+            return str(p)
 
     # 2) infer prefix (common naming convention)
     if "_frame_" in file_name:
         prefix = file_name.split("_frame_")[0]
         p = RAW_FRAMES_DIR / prefix / file_name
         if p.exists():
-            return p
+            return str(p)
 
     # 3) full search (slower)
     for root, _, files in os.walk(RAW_FRAMES_DIR):
         if file_name in files:
-            return Path(root) / file_name
+            return str(Path(root) / file_name)
 
     return None
 
-def clear_dir(path):
-    """Delete directory contents (recreate empty dir)."""
-    path = Path(path)
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True, exist_ok=True)
-
 def save_split(ann_data, images, annotations, split_name, source_frames_dir=None, hinted_video=None, skip_annotations=False):
     """
-    Save a split (train/val/test).
+    Save a split (train/val/test) WITHOUT copying images.
+    Instead, update file_name to include full path to original location.
     - For train/val from merged dataset: source_frames_dir = MAIN_FRAMES
     - For test from raw video: hinted_video = video_name
     - skip_annotations: If True, don't create annotations JSON (for test split)
     """
-    out_images_dir = PROCESSED_IMAGES_DIR / split_name
-    clear_dir(out_images_dir)
-
     successful_images = []
     missing_files = []
 
-    # Copy frames with progress bar
-    for img in tqdm(images, desc=f"Copying -> {split_name}", unit="img"):
+    # Update image paths with progress bar
+    for img in tqdm(images, desc=f"Processing -> {split_name}", unit="img"):
         fname = img["file_name"]
         
         # Determine source path
@@ -106,15 +95,14 @@ def save_split(ann_data, images, annotations, split_name, source_frames_dir=None
         else:
             # From raw frames (use find_frame_path)
             src_path = find_frame_path(fname, hinted_video)
+            if src_path:
+                src_path = Path(src_path)
         
-        if src_path and Path(src_path).exists():
-            dst_path = out_images_dir / fname
-            try:
-                shutil.copy2(src_path, dst_path)
-                successful_images.append(img)
-            except Exception as e:
-                tqdm.write(f"⚠️ Failed copying {fname}: {e}")
-                missing_files.append(fname)
+        if src_path and src_path.exists():
+            # Create new image entry with full path
+            img_copy = img.copy()
+            img_copy["file_name"] = str(src_path)  # Store full path
+            successful_images.append(img_copy)
         else:
             tqdm.write(f"⚠️ Frame not found for {fname}")
             missing_files.append(fname)
@@ -146,7 +134,6 @@ def save_split(ann_data, images, annotations, split_name, source_frames_dir=None
         "missing_count": len(missing_files),
         "missing_files": missing_files,
         "json_path": str(out_json_path) if out_json_path else None,
-        "images_dir": str(out_images_dir),
     }
 
 def create_splits_from_video(ann_data, video_hint, num_frames=None, train_ratio=0.8):
@@ -179,7 +166,7 @@ def create_splits_from_merged(ann_data, train_ratio=0.8):
     train_images = images[:split_idx]
     val_images = images[split_idx:]
 
-    # Save splits (frames come from MAIN_FRAMES)
+    # Save splits (frames reference from MAIN_FRAMES)
     train_stats = save_split(ann_data, train_images, annotations, "train", source_frames_dir=MAIN_FRAMES)
     val_stats = save_split(ann_data, val_images, annotations, "val", source_frames_dir=MAIN_FRAMES)
 
@@ -212,10 +199,10 @@ def create_test_split_from_video(video_name, start_frame, frame_count):
     # Select frames in range [start_frame, end_frame)
     test_images = images[start_frame:end_frame]
     
-    print(f"📋 Copying {len(test_images)} frames: frame {start_frame} to frame {end_frame - 1}")
+    print(f"📋 Processing {len(test_images)} frames: frame {start_frame} to frame {end_frame - 1}")
     
     # Skip annotations (will be generated by model at inference time)
-    return save_split(ann_data, test_images, [], "test", hinted_video=video_name, skip_annotations=True)
+    return save_split(ann_data, test_images, [], "test", hinted_video=video_name, skip_annotations=False)
 
 def count_frames_in_directory(directory: Path):
     """Count number of image files in a directory."""
@@ -225,8 +212,10 @@ def count_frames_in_directory(directory: Path):
 
 def main():
     print("\n" + "=" * 60)
-    print("Dataset Split Tool")
+    print("Dataset Split Tool (Memory Optimized)")
     print("=" * 60)
+    print("\n💡 Note: Images will NOT be copied. Annotations will")
+    print("   reference original image locations to save disk space.")
     print("\nChoose source for train/val splits:")
     print("1) Single video (from data/raw)")
     print("2) Merged dataset (from data/main_dataset)")
@@ -277,7 +266,7 @@ def main():
             print("❌ Invalid ratio (must be between 0 and 1)")
             return
 
-        print(f"\n🔄 Splitting video '{video_name}' — first {num_frames or 'ALL'} frames — train_ratio={train_ratio}\n")
+        print(f"\n📄 Splitting video '{video_name}' — first {num_frames or 'ALL'} frames — train_ratio={train_ratio}\n")
         train_stats, val_stats = create_splits_from_video(ann_data, video_name, num_frames=num_frames, train_ratio=train_ratio)
 
     elif choice == "2":
@@ -299,11 +288,11 @@ def main():
             print("❌ Invalid ratio (must be between 0 and 1)")
             return
 
-        print(f"\n🔄 Splitting merged dataset — train_ratio={train_ratio}\n")
+        print(f"\n📄 Splitting merged dataset — train_ratio={train_ratio}\n")
         train_stats, val_stats = create_splits_from_merged(ann_data, train_ratio=train_ratio)
 
         # Ask for test split from raw video
-        make_test = input("\n📝 Do you want to create a test split from a raw video? (y/n): ").strip().lower()
+        make_test = input("\n🔍 Do you want to create a test split from a raw video? (y/n): ").strip().lower()
         if make_test == "y":
             # List available raw frame directories
             frame_dirs = list_raw_frame_directories()
@@ -319,7 +308,7 @@ def main():
                     print(f"  {i}. {vdir} ({count} frames)")
                 
                 try:
-                    idx = int(input("\n📝 Select a video directory for test split: ").strip())
+                    idx = int(input("\n🔍 Select a video directory for test split: ").strip())
                     if idx not in dir_info:
                         print("❌ Invalid selection")
                     else:
@@ -338,14 +327,12 @@ def main():
                             if frame_count <= 0:
                                 print("❌ Frame count must be positive")
                             else:
-                                print(f"\n🔄 Creating test split from {selected_video}...")
-                                print(f"   Copying frames {start_frame} to {start_frame + frame_count - 1}\n")
+                                print(f"\n📄 Creating test split from {selected_video}...")
+                                print(f"   Processing frames {start_frame} to {start_frame + frame_count - 1}\n")
                                 test_stats = create_test_split_from_video(selected_video, start_frame, frame_count)
                                 if test_stats:
                                     print(f"\n✅ Test split created!")
                                     print(f"Test: images={test_stats['images_count']}, missing={test_stats['missing_count']}")
-                                    print(f"Test images dir: {test_stats['images_dir']}")
-                                    print(f"⚠️ Note: No annotations JSON created (will be generated by model at inference)")
                 except ValueError:
                     print("❌ Invalid input. Please enter valid numbers.")
                 except Exception as e:
@@ -363,8 +350,8 @@ def main():
     print(f" Val : images={val_stats['images_count']}, annotations={val_stats['annotations_count']}, missing_frames={val_stats['missing_count']}")
     print(f"\nTrain JSON: {train_stats['json_path']}")
     print(f" Val  JSON: {val_stats['json_path']}")
-    print(f"Train images dir: {train_stats['images_dir']}")
-    print(f" Val images dir: {val_stats['images_dir']}")
+    print(f"\n💡 Images are referenced from their original locations")
+    print(f"   (no copying performed to save disk space)")
     
     if train_stats['missing_count'] or val_stats['missing_count']:
         print("\n⚠️ Missing frames sample (first few):")
