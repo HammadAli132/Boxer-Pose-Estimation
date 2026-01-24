@@ -17,6 +17,9 @@ This repository implements a complete pipeline for boxer detection, tracking, an
 
 ---
 
+https://github.com/user-attachments/assets/85f23710-baa2-475a-8589-5e5fcc28c15b
+
+
 ## Architecture overview
 The codebase is organized around modular pipelines (YOLO detection/pose, RF-DETR detection, DinoV2-based keypoint heads, ViTPose integration), a small set of data-processing tools for preparing COCO/YOLO datasets, and visualization helpers.
 
