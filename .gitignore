@@ -18,6 +18,9 @@ cleaner.py
 /experiments/**/models/
 /experiments/pseudo_preds/
 
+# virtual environments
+/vitpose-venv
+
 # But DON'T ignore the models folder inside src
 !src/models/
 
