@@ -107,6 +107,73 @@ def ensure_pretrained(model_name: str) -> Path:
     print("✅ Download complete.")
     return local_file
 
+def sanitize_labels(labels_dir: Path):
+    """
+    Scans all YOLO label files and strictly clamps 
+    normalized coordinates to [0.0, 1.0] to prevent YOLO errors.
+    """
+    print(f"\n🧹 Sanitizing labels in {labels_dir} to fix out-of-bounds coordinates...")
+    
+    # Define paths to scan
+    label_dirs = [
+        labels_dir / "train",
+        labels_dir / "val"
+    ]
+    
+    fixed_count = 0
+    
+    for label_dir in label_dirs:
+        if not label_dir.exists(): 
+            continue
+        
+        # Find all .txt files
+        files = list(label_dir.glob("*.txt"))
+        
+        for file_path in files:
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+            
+            new_lines = []
+            modified = False
+            
+            for line in lines:
+                parts = list(map(float, line.strip().split()))
+                
+                # parts[0] is class_id (int)
+                # parts[1..4] are bbox (x,y,w,h)
+                # parts[5..] are keypoints (x,y,v)
+                
+                # 1. Fix Bounding Box (Indices 1-4)
+                for i in range(1, 5):
+                    if not (0.0 <= parts[i] <= 1.0):
+                        parts[i] = max(0.0, min(parts[i], 1.0))
+                        modified = True
+                
+                # 2. Fix Keypoints (Indices 5, 6, 8, 9, ...)
+                # Skip every 3rd element (Visibility flags)
+                if len(parts) > 5:
+                    for i in range(5, len(parts), 3):
+                        # Clamp X
+                        if i < len(parts) and not (0.0 <= parts[i] <= 1.0):
+                            parts[i] = max(0.0, min(parts[i], 1.0))
+                            modified = True
+                        # Clamp Y
+                        if i+1 < len(parts) and not (0.0 <= parts[i+1] <= 1.0):
+                            parts[i+1] = max(0.0, min(parts[i+1], 1.0))
+                            modified = True
+                        # Ignore V (i+2)
+
+                # Reconstruct line
+                # Class ID is int, others are float
+                line_str = f"{int(parts[0])} " + " ".join(f"{x:.6f}" for x in parts[1:]) + "\n"
+                new_lines.append(line_str)
+            
+            if modified:
+                with open(file_path, 'w') as f:
+                    f.writelines(new_lines)
+                fixed_count += 1
+                    
+    print(f"✅ Sanitization Complete: Fixed {fixed_count} files.")
 
 def prepare_virtual_dataset(split: str, json_path: Path):
     """
@@ -115,6 +182,7 @@ def prepare_virtual_dataset(split: str, json_path: Path):
     2. Creates directories: data/processed/images/{split} & labels/{split}
     3. Creates symlinks in images/{split} pointing to original image locations
     4. Generates YOLO .txt labels in labels/{split}
+    5. Sanitizes labels to fix out-of-bounds coordinates
     
     This structure allows YOLO to find both images and labels without duplicating image files.
     """
@@ -191,6 +259,9 @@ def prepare_virtual_dataset(split: str, json_path: Path):
         num_keypoints=NUM_KEYPOINTS,
         clear_out=False  # We already cleared it
     )
+
+    # 3. Sanitize labels
+    sanitize_labels(LABELS_DIR)
 
     print(f"✅ Virtual dataset prepared for '{split}'")
     return img_split_dir
@@ -323,7 +394,8 @@ def run_yolo_training(
                 project=str(current_run_dir),
                 name="",  # avoid subfolder (no /exp)
                 exist_ok=True,
-                device=0 if torch.cuda.is_available() else "cpu"
+                device=0 if torch.cuda.is_available() else "cpu",
+                # patience=10,
             )
             
             # Print validation summary
