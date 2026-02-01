@@ -24,23 +24,16 @@ FONT_THICKNESS = 2
 TEXT_COLOR = (255, 255, 255)
 model_name = "yolov11m-pose"
 
-# Your custom 14-keypoint skeleton
+# Custom 14-keypoint skeleton (Correct Structure)
 SKELETON_CONNECTIONS = [
-    (8, 9),
-    (0, 2),
-    (1, 3),
-    (0, 1),
-    (2, 3),
-    (5, 7),
-    (3, 5),
-    (4, 6),
-    (10, 11),
-    (13, 12),
-    (0, 12),
-    (12, 1),
-    (1, 10),
-    (0, 8),
-    (2, 4)
+    (0, 1),           # Nose -> Neck
+    (1, 2), (1, 3),   # Neck -> Shoulders
+    (2, 4), (4, 6),   # Left Arm
+    (3, 5), (5, 7),   # Right Arm
+    (2, 8), (3, 9),   # Torso (Shoulders -> Hips)
+    (8, 9),           # Hip connection
+    (8, 10), (10, 12),# Left Leg
+    (9, 11), (11, 13) # Right Leg
 ]
 
 # ---------------------------------
@@ -68,12 +61,24 @@ class PoseApp:
             messagebox.showerror("Error", "Please select a video first.")
             return
 
-        # Ask for frame range
-        start_frame = simpledialog.askinteger("Start Frame", "Enter start frame:", minvalue=0)
-        end_frame = simpledialog.askinteger("End Frame", "Enter end frame:", minvalue=start_frame+1)
+        # Ask if user wants to process complete video or frame range
+        process_complete = messagebox.askyesno(
+            "Processing Mode",
+            "Do you want to process the COMPLETE video?\n\n"
+            "Click 'Yes' for complete video\n"
+            "Click 'No' to specify frame range"
+        )
 
-        if start_frame is None or end_frame is None:
-            return
+        if process_complete:
+            start_frame = 0
+            end_frame = None  # None indicates process until end
+        else:
+            # Ask for frame range
+            start_frame = simpledialog.askinteger("Start Frame", "Enter start frame:", minvalue=0)
+            end_frame = simpledialog.askinteger("End Frame", "Enter end frame:", minvalue=start_frame+1)
+
+            if start_frame is None or end_frame is None:
+                return
 
         # Ask for output save path
         output_path = filedialog.asksaveasfilename(
@@ -187,7 +192,7 @@ class PoseApp:
     #  🔥 UPDATED POSE PROCESSING — FULL INTEGRATION
     # ---------------------------------------------------------
     def process_video(self, start_frame, end_frame, output_path):
-        model_path = MODELS_ROOT / "yolov11s-pose" / "best.pt"
+        model_path = MODELS_ROOT / "yolov11m-pose" / "best.pt"
         if not model_path.exists():
             raise FileNotFoundError(f"Model not found:\n{model_path}")
 
@@ -214,7 +219,9 @@ class PoseApp:
             if frame_idx < start_frame:
                 frame_idx += 1
                 continue
-            if frame_idx > end_frame:
+            
+            # If end_frame is None, process until video ends
+            if end_frame is not None and frame_idx > end_frame:
                 break
 
             # 🔥 TRACKING MODE
