@@ -118,9 +118,6 @@ sympy==1.14.0
 terminado==0.18.1
 tinycss2==1.4.0
 tomli==2.4.0
-torch==2.9.1
-torchaudio==2.11.0.dev20260125+cu128
-torchvision==0.24.1
 tornado==6.5.4
 tqdm==4.67.1
 traitlets==5.14.3
