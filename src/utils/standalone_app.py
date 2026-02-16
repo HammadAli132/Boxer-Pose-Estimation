@@ -192,7 +192,7 @@ class PoseApp:
     #  🔥 UPDATED POSE PROCESSING — FULL INTEGRATION
     # ---------------------------------------------------------
     def process_video(self, start_frame, end_frame, output_path):
-        model_path = MODELS_ROOT / "yolov11m-pose" / "best.pt"
+        model_path = MODELS_ROOT / "yolov11x-pose" / "best.pt"
         if not model_path.exists():
             raise FileNotFoundError(f"Model not found:\n{model_path}")
 

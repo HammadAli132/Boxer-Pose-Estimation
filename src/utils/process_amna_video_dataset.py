@@ -45,11 +45,11 @@ def setup_yolo_models(models_dir: Path):
     from ultralytics import YOLO
     
     # 1. Load Custom Olympic Model
-    custom_model_path = models_dir / "yolov11m-pose" / "best.pt"
+    custom_model_path = models_dir / "yolov11x-pose" / "best.pt"
     if not custom_model_path.exists():
         raise FileNotFoundError(f"❌ Custom Olympic model missing at: {custom_model_path}")
     
-    print(f"⚙️  Loading Custom Olympic Model (YOLOv11m-pose)...")
+    print(f"⚙️  Loading Custom Olympic Model (YOLOv11x-pose)...")
     model_olympic = YOLO(str(custom_model_path))
     
     # 2. Setup/Download Pre-trained Generic Model
@@ -157,10 +157,17 @@ def run_yolo_inference(model, frame_paths: List[Tuple[int, Path]], is_custom_mod
         frame_annotations = []
         
         if result.boxes is not None and result.keypoints is not None and len(result.boxes) > 0:
-            xyxy_boxes = result.boxes.xyxy.cpu().numpy() 
-            kpts_data = result.keypoints.data.cpu().numpy() 
-            
-            for person_idx in range(len(xyxy_boxes)):
+            xyxy_boxes = result.boxes.xyxy.cpu().numpy()
+            kpts_data = result.keypoints.data.cpu().numpy()
+
+            # For the generic model, if multiple detections exist, keep only
+            # the largest bbox to filter out posters/background detections
+            indices = range(len(xyxy_boxes))
+            if not is_custom_model and len(xyxy_boxes) > 1:
+                areas = [(x2 - x1) * (y2 - y1) for x1, y1, x2, y2 in xyxy_boxes]
+                indices = [int(np.argmax(areas))]
+
+            for person_idx in indices:
                 # 1. Bounding Box
                 x1, y1, x2, y2 = xyxy_boxes[person_idx]
                 bbox_w, bbox_h = x2 - x1, y2 - y1
@@ -197,16 +204,16 @@ def run_yolo_inference(model, frame_paths: List[Tuple[int, Path]], is_custom_mod
 # MAIN LOGIC
 # ============================================================================
 
-def process_single_directory(ann_path: Path, model_olympic, model_generic, overwrite: bool = False):
+def process_single_directory(ann_path: Path, model_olympic, model_generic, overwrite: bool = True):
     dir_path = ann_path.parent
     print(f"\n{'='*80}\nProcessing: {dir_path}")
     
     frames_dir = dir_path / "frames"
     yolo_ann_path = dir_path / "yolo_annotations.json"
     
-    if not overwrite and yolo_ann_path.exists():
-        print(f"⏭️  Skipping (yolo_annotations.json already exists).")
-        return True
+    # if not overwrite and yolo_ann_path.exists():
+    #     print(f"⏭️  Skipping (yolo_annotations.json already exists).")
+    #     return True
     
     try:
         with open(ann_path, 'r') as f: annotations = json.load(f)

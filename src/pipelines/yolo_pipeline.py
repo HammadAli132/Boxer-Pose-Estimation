@@ -49,7 +49,7 @@ RUNS_ROOT = PROJECT_ROOT / "runs"
 DEFAULT_MODEL = "yolov8m-pose"
 NUM_KEYPOINTS = 14
 EPOCHS = 50
-IMGSZ = 640
+IMGSZ = 512
 DEFAULT_BATCH = 16
 DEFAULT_WORKERS = 0
 
@@ -58,24 +58,30 @@ WEIGHTS_MAP = {
     "yolov8m-pose": "yolov8m-pose.pt",
     "yolov11s-pose": "yolo11s-pose.pt",
     "yolov11m-pose": "yolo11m-pose.pt",
+    "yolov11x-pose": "yolo11x-pose.pt",
 }
 
 KEYPOINTS = [
+    "nose", "neck",
     "left_shoulder", "right_shoulder",
+    "left_elbow", "right_elbow",
+    "left_wrist", "right_wrist",
     "left_hip", "right_hip",
     "left_knee", "right_knee",
-    "left_ankle", "right_ankle",
-    "left_elbow", "left_wrist",
-    "right_elbow", "right_wrist",
-    "neck", "nose"
-]
-SKELETON = [
-    [9, 10], [1, 3], [2, 4], [1, 2], [3, 4],
-    [6, 8], [4, 6], [5, 7], [11, 12],
-    [14, 13], [1, 13], [13, 2], [2, 11],
-    [1, 9], [3, 5]
+    "left_ankle", "right_ankle"
 ]
 
+# 0-indexed connection pairs
+SKELETON = [
+    [0, 1],           # Nose -> Neck
+    [1, 2], [1, 3],   # Neck -> Shoulders
+    [2, 4], [4, 6],   # Left Arm
+    [3, 5], [5, 7],   # Right Arm
+    [2, 8], [3, 9],   # Torso (Shoulders -> Hips)
+    [8, 9],           # Hip connection
+    [8, 10], [10, 12],# Left Leg
+    [9, 11], [11, 13] # Right Leg
+]
 
 # -----------------------
 # Helpers
@@ -229,7 +235,7 @@ def prepare_virtual_dataset(split: str, json_path: Path):
                 symlink_path.unlink()
             
             # Create symlink
-            os.symlink(original_path, symlink_path)
+            os.symlink(original_path.resolve(), symlink_path)
             symlinks_created += 1
             
         except OSError as e:

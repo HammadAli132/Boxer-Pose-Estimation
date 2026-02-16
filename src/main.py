@@ -24,7 +24,8 @@ def run_model_selection(script_name):
     print("2. YOLOv8m-Pose")
     print("3. Yolov11s-Pose")
     print("4. Yolov11m-Pose")
-    model_choice = input("Select model (1 or 2): ").strip()
+    print("5. Yolov11x-Pose")
+    model_choice = input("Select model (1-5): ").strip()
     
     if model_choice == "1":
         model_name = "yolov8s-pose"
@@ -34,6 +35,8 @@ def run_model_selection(script_name):
         model_name = "yolov11s-pose"
     elif model_choice == "4":
         model_name = "yolov11m-pose"
+    elif model_choice == "5":
+        model_name = "yolov11x-pose"
     else:
         print("❌ Invalid model choice.")
         return
