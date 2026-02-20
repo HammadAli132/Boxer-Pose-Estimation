@@ -137,7 +137,7 @@ def visualize_samples(data_root: Path, num_samples: int = 4):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, default="data/DATASET")
-    parser.add_argument("--num-samples", type=int, default=6)
+    parser.add_argument("--num-samples", type=int, default=10)
     args = parser.parse_args()
     
     visualize_samples(PROJECT_ROOT / args.data_dir, args.num_samples)

@@ -165,7 +165,13 @@ def run_yolo_inference(model, frame_paths: List[Tuple[int, Path]], is_custom_mod
             indices = range(len(xyxy_boxes))
             if not is_custom_model and len(xyxy_boxes) > 1:
                 areas = [(x2 - x1) * (y2 - y1) for x1, y1, x2, y2 in xyxy_boxes]
-                indices = [int(np.argmax(areas))]
+                # getting the second largest area to handle cases where the largest might be a poster
+                sorted_areas = sorted(areas, reverse=True)
+                if len(sorted_areas) > 1:
+                    second_largest_area = sorted_areas[1]
+                    indices = [i for i, area in enumerate(areas) if area == second_largest_area]
+                else:
+                    indices = [int(np.argmax(areas))]
 
             for person_idx in indices:
                 # 1. Bounding Box
@@ -211,9 +217,9 @@ def process_single_directory(ann_path: Path, model_olympic, model_generic, overw
     frames_dir = dir_path / "frames"
     yolo_ann_path = dir_path / "yolo_annotations.json"
     
-    # if not overwrite and yolo_ann_path.exists():
-    #     print(f"⏭️  Skipping (yolo_annotations.json already exists).")
-    #     return True
+    if not overwrite and yolo_ann_path.exists():
+        print(f"⏭️  Skipping (yolo_annotations.json already exists).")
+        return True
     
     try:
         with open(ann_path, 'r') as f: annotations = json.load(f)
