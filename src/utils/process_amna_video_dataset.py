@@ -5,8 +5,9 @@ YOLOv11-Pose Video Dataset Processing Script
 This script:
 1. Traverses the data/DATASET/ directory to find all annotations.json files
 2. Extracts frames from videos based on annotation frame ranges
-3. Routes Olympic datasets to custom YOLOv11m-pose and others to YOLO11x-pose
-4. Runs inference and saves 14-point skeleton annotations in yolo_annotations.json
+3. Routes Olympic datasets to custom YOLOv11x-pose and others to YOLO11x-pose
+4. Runs inference and saves 14-point skeleton annotations with CONFIDENCE SCORES
+5. Applies NMS to custom model outputs to ensure max 2 boxers (no duplicates)
 """
 
 import sys
@@ -59,7 +60,6 @@ def setup_yolo_models(models_dir: Path):
     
     if not generic_model_path.exists():
         print(f"⬇️  Downloading pre-trained YOLO11x-pose (might take a minute)...")
-        # Official Ultralytics v8.3.0 release URL for yolo11x-pose
         url = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x-pose.pt"
         urllib.request.urlretrieve(url, str(generic_model_path))
         print(f"✅ Downloaded to {generic_model_path}")
@@ -92,9 +92,9 @@ def convert_kpts_coco17_to_custom14(kpts: np.ndarray, confs: np.ndarray) -> List
             x, y = kpts[idx]
             c = confs[idx]
             
-        # Visibility: 2 (visible), 1 (labeled/hidden), 0 (missing)
-        v = 2 if c > 0.4 else 0
-        flat_list.extend([float(x), float(y), int(v)])
+        # Store x, y, confidence (float)
+        # FIX: Explicitly cast 'c' to python float to avoid JSON serialization errors
+        flat_list.extend([float(x), float(y), float(c)])
         
     return flat_list
 
@@ -104,9 +104,66 @@ def format_native_custom14(kpts: np.ndarray, confs: np.ndarray) -> List[float]:
     for i in range(len(kpts)):  # Should be 14
         x, y = kpts[i]
         c = confs[i]
-        v = 2 if c > 0.4 else 0
-        flat_list.extend([float(x), float(y), int(v)])
+        # FIX: Explicitly cast 'c' to python float
+        flat_list.extend([float(x), float(y), float(c)])
     return flat_list
+
+# ============================================================================
+# HELPER: NMS / FILTERING
+# ============================================================================
+
+def calculate_iou(box1, box2):
+    """Calculates Intersection over Union (IoU) between two bounding boxes [x1, y1, x2, y2]."""
+    x1_1, y1_1, x2_1, y2_1 = box1
+    x1_2, y1_2, x2_2, y2_2 = box2
+
+    xi1 = max(x1_1, x1_2)
+    yi1 = max(y1_1, y1_2)
+    xi2 = min(x2_1, x2_2)
+    yi2 = min(y2_1, y2_2)
+
+    inter_area = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+    
+    box1_area = (x2_1 - x1_1) * (y2_1 - y1_1)
+    box2_area = (x2_2 - x1_2) * (y2_2 - y1_2)
+    union_area = box1_area + box2_area - inter_area
+
+    if union_area == 0: return 0
+    return inter_area / union_area
+
+def filter_custom_model_detections(boxes, confs, iou_thresh=0.5, max_dets=2):
+    """
+    Filters detections for the custom model to remove duplicates.
+    1. Sorts by confidence.
+    2. Removes boxes that overlap significantly (IoU > thresh) with higher confidence boxes.
+    3. Keeps at most 'max_dets' (2) boxes.
+    """
+    if len(boxes) == 0: return []
+    
+    # Sort indices by confidence (descending)
+    sorted_indices = np.argsort(confs)[::-1]
+    
+    keep_indices = []
+    
+    for i in sorted_indices:
+        current_box = boxes[i]
+        
+        # Check overlap with already kept boxes
+        is_duplicate = False
+        for kept_idx in keep_indices:
+            kept_box = boxes[kept_idx]
+            if calculate_iou(current_box, kept_box) > iou_thresh:
+                is_duplicate = True
+                break
+        
+        if not is_duplicate:
+            keep_indices.append(i)
+            
+        # Stop if we found enough people
+        if len(keep_indices) >= max_dets:
+            break
+            
+    return keep_indices
 
 # ============================================================================
 # VIDEO PROCESSING
@@ -159,20 +216,29 @@ def run_yolo_inference(model, frame_paths: List[Tuple[int, Path]], is_custom_mod
         if result.boxes is not None and result.keypoints is not None and len(result.boxes) > 0:
             xyxy_boxes = result.boxes.xyxy.cpu().numpy()
             kpts_data = result.keypoints.data.cpu().numpy()
+            box_confs = result.boxes.conf.cpu().numpy() # Get box confidence for sorting
 
-            # For the generic model, if multiple detections exist, keep only
-            # the largest bbox to filter out posters/background detections
-            indices = range(len(xyxy_boxes))
-            if not is_custom_model and len(xyxy_boxes) > 1:
-                areas = [(x2 - x1) * (y2 - y1) for x1, y1, x2, y2 in xyxy_boxes]
-                # getting the second largest area to handle cases where the largest might be a poster
-                sorted_areas = sorted(areas, reverse=True)
-                if len(sorted_areas) > 1:
-                    second_largest_area = sorted_areas[1]
-                    indices = [i for i, area in enumerate(areas) if area == second_largest_area]
+            indices = []
+            
+            # --- FILTERING LOGIC ---
+            if is_custom_model:
+                # Custom Model: Use NMS to remove duplicates and keep max 2 boxers
+                indices = filter_custom_model_detections(xyxy_boxes, box_confs, iou_thresh=0.5, max_dets=2)
+            else:
+                # Generic Model: Old logic to filter posters (Keep second largest area if > 1 detection)
+                # Note: This was your previous logic for dealing with the poster in the generic dataset
+                if len(xyxy_boxes) > 1:
+                    areas = [(x2 - x1) * (y2 - y1) for x1, y1, x2, y2 in xyxy_boxes]
+                    sorted_areas = sorted(areas, reverse=True)
+                    if len(sorted_areas) > 1:
+                        second_largest_area = sorted_areas[1]
+                        indices = [i for i, area in enumerate(areas) if area == second_largest_area]
+                    else:
+                        indices = [int(np.argmax(areas))]
                 else:
-                    indices = [int(np.argmax(areas))]
+                    indices = range(len(xyxy_boxes))
 
+            # --- PROCESS SELECTED DETECTIONS ---
             for person_idx in indices:
                 # 1. Bounding Box
                 x1, y1, x2, y2 = xyxy_boxes[person_idx]
@@ -198,7 +264,7 @@ def run_yolo_inference(model, frame_paths: List[Tuple[int, Path]], is_custom_mod
                     "bbox": bbox,
                     "area": area,
                     "num_keypoints": sum(1 for i in range(2, len(custom_kpts), 3) if custom_kpts[i] > 0),
-                    "person_id": person_idx
+                    "person_id": int(person_idx) # Ensure ID is int
                 }
                 frame_annotations.append(annotation)
                 
@@ -246,7 +312,7 @@ def process_single_directory(ann_path: Path, model_olympic, model_generic, overw
     # ---------------------------------------------------------
     is_olympic = "olympic" in str(dir_path).lower()
     active_model = model_olympic if is_olympic else model_generic
-    model_name = "YOLOv11m-pose (Custom Olympic)" if is_olympic else "YOLO11x-pose (Pre-trained Generic)"
+    model_name = "YOLOv11x-pose (Custom Olympic)" if is_olympic else "YOLO11x-pose (Pre-trained Generic)"
     
     print(f"🤖 Routing to: {model_name}")
     pose_annotations = run_yolo_inference(active_model, extracted_frames, is_custom_model=is_olympic)
@@ -302,7 +368,7 @@ def main():
     if not annotation_files: return
     
     for ann_path in annotation_files:
-        process_single_directory(ann_path, model_olympic, model_generic, args.overwrite)
+        process_single_directory(ann_path, model_olympic, model_generic, False)
         
     print(f"\n✅ Processing Complete!")
 

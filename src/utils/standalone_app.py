@@ -5,6 +5,8 @@ from tkinter import filedialog, simpledialog, messagebox
 from pathlib import Path
 from ultralytics import YOLO
 import numpy as np
+import json
+from datetime import datetime
 
 # ---------------------------------
 # Your directory structure
@@ -210,7 +212,54 @@ class PoseApp:
             output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
         )
 
+        # Initialize annotations structure
+        output_path_obj = Path(output_path)
+        json_output_path = output_path_obj.parent / "annotations.json"
+        
+        ann_id = 1
+        frames_annotations = []
+        
+        # COCO format structure
+        coco_data = {
+            "info": {
+                "description": "YOLO Pose Extraction with Confidence",
+                "version": "1.0",
+                "year": datetime.now().year,
+                "contributor": "YOLOv11 Pipeline",
+                "date_created": datetime.now().strftime("%Y/%m/%d")
+            },
+            "licenses": [{"id": 1, "name": "Unknown", "url": ""}],
+            "images": [],
+            "annotations": [],
+            "categories": [
+                {
+                    "id": 0,
+                    "name": "boxer_red",
+                    "supercategory": "person",
+                    "keypoints": ["nose", "neck", "left_shoulder", "right_shoulder", 
+                                  "left_elbow", "right_elbow", "left_wrist", "right_wrist",
+                                  "left_hip", "right_hip", "left_knee", "right_knee", 
+                                  "left_ankle", "right_ankle"],
+                    "skeleton": [(0, 1), (1, 2), (1, 3), (2, 4), (4, 6), (3, 5), (5, 7),
+                                (2, 8), (3, 9), (8, 9), (8, 10), (10, 12), (9, 11), (11, 13)]
+                },
+                {
+                    "id": 1,
+                    "name": "boxer_blue",
+                    "supercategory": "person",
+                    "keypoints": ["nose", "neck", "left_shoulder", "right_shoulder", 
+                                  "left_elbow", "right_elbow", "left_wrist", "right_wrist",
+                                  "left_hip", "right_hip", "left_knee", "right_knee", 
+                                  "left_ankle", "right_ankle"],
+                    "skeleton": [(0, 1), (1, 2), (1, 3), (2, 4), (4, 6), (3, 5), (5, 7),
+                                (2, 8), (3, 9), (8, 9), (8, 10), (10, 12), (9, 11), (11, 13)]
+                }
+            ]
+        }
+
         frame_idx = 0
+        image_id = 1
+        
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -238,6 +287,18 @@ class PoseApp:
             if track_ids is not None:
                 track_ids = track_ids.cpu().numpy().astype(int)
 
+            # Add image to COCO structure
+            coco_data["images"].append({
+                "id": image_id,
+                "file_name": f"frame_{frame_idx:06d}.jpg",
+                "height": height,
+                "width": width,
+                "license": 1,
+                "flickr_url": "",
+                "coco_url": "",
+                "date_captured": ""
+            })
+
             for i in range(len(kpts)):
                 k = kpts[i]
                 bbox = boxes[i]
@@ -253,12 +314,40 @@ class PoseApp:
                 }
 
                 annotated = self._draw_keypoints(annotated, annotation)
+                
+                # Add to COCO annotations (keypoints as flat array with confidence)
+                kp_flat = k.flatten().tolist()  # [x1, y1, conf1, x2, y2, conf2, ...]
+                x_center, y_center, w, h = bbox.tolist()  # ✅ native floats
+                bbox_coco = [x_center - w/2, y_center - h/2, w, h]
+                
+                coco_data["annotations"].append({
+                    "id": ann_id,
+                    "image_id": image_id,
+                    "category_id": cls if cls in [0, 1] else 0,
+                    "keypoints": kp_flat,
+                    "num_keypoints": len(k),
+                    "bbox": bbox_coco,
+                    "iscrowd": 0,
+                    "area": float(w * h),
+                    "segmentation": [],
+                    "track_id": track_id
+                })
+                ann_id += 1
 
             writer.write(annotated)
+            image_id += 1
             frame_idx += 1
 
         cap.release()
         writer.release()
+        
+        # Save annotations to JSON
+        with open(json_output_path, "w") as f:
+            json.dump(coco_data, f, indent=2)
+        
+        print(f"\n[INFO] ✅ Annotations saved to: {json_output_path}")
+        print(f"[INFO] Total frames: {image_id - 1}")
+        print(f"[INFO] Total detections: {len(coco_data['annotations'])}")
 
 
 # ---------------------------------

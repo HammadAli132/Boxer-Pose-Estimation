@@ -97,8 +97,9 @@ def draw_skeleton_on_image(img, annotation):
         
     return img
 
-def visualize_samples(data_root: Path, num_samples: int = 4):
-    annotated_dirs = find_annotated_directories(data_root)
+def visualize_samples(data_root: List, num_samples: int = 4):
+    # annotated_dirs = find_annotated_directories(data_root)
+    annotated_dirs = data_root
     if not annotated_dirs:
         print(f"❌ No YOLO annotated directories found!")
         return
@@ -140,4 +141,4 @@ if __name__ == "__main__":
     parser.add_argument("--num-samples", type=int, default=10)
     args = parser.parse_args()
     
-    visualize_samples(PROJECT_ROOT / args.data_dir, args.num_samples)
+    visualize_samples([PROJECT_ROOT / args.data_dir / "V4", PROJECT_ROOT / args.data_dir / "V6"], args.num_samples)

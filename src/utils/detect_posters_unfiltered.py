@@ -70,8 +70,8 @@ def convert_kpts_coco17_to_custom14(kpts: np.ndarray, confs: np.ndarray) -> List
             x, y = kpts[idx]
             c = confs[idx]
         
-        v = 2 if c > 0.4 else 0
-        flat_list.extend([float(x), float(y), int(v)])
+        # v = 2 if c > 0.4 else 0
+        flat_list.extend([float(x), float(y), float(c)])
     
     return flat_list
 
@@ -330,12 +330,12 @@ def main():
         return
 
     # 3. Check for existing tracks
-    yolo_annotations_path = TARGET_DIR / "yolo_annotations.json"
+    yolo_annotations_path = TARGET_DIR / "yolo_annotations_tracked.json"
     use_existing = False
     track_histories = None
     
     if yolo_annotations_path.exists():
-        print(f"\n✅ Found existing yolo_annotations.json")
+        print(f"\n✅ Found existing yolo_annotations_tracked.json")
         response = input("💡 Use existing tracking data? (y/n): ")
         if response.lower() == 'y':
             use_existing = True
